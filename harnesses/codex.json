@@ -1,0 +1,21 @@
+{
+  "id": "codex",
+  "name": "Codex",
+  "protocol": "1.0",
+  "entry": { "kind": "in-process", "module": "codex", "cmd": ["codex"] },
+  "probe": ["--version"],
+  "capabilities": {
+    "approvals": false,
+    "steering": false,
+    "resume": "cursor",
+    "effort": ["low", "medium", "high"],
+    "sandbox": ["read-only", "workspace-write", "danger-full-access"],
+    "images": true,
+    "system": "preamble"
+  },
+  "routes": ["explore", "build", "operate"],
+  "serves": [{ "route": "explore" }, { "route": "operate" }, { "role": "chair" }, { "role": "verify" }],
+  "roles": ["worker", "verify", "chair", "tune"],
+  "rank": 3,
+  "cost": "subscription"
+}

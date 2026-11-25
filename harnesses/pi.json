@@ -1,0 +1,21 @@
+{
+  "id": "pi",
+  "name": "pi",
+  "protocol": "1.0",
+  "entry": { "kind": "in-process", "module": "pi", "cmd": ["pi"] },
+  "probe": ["--version"],
+  "capabilities": {
+    "approvals": false,
+    "steering": false,
+    "resume": "cursor",
+    "effort": ["low", "medium", "high"],
+    "sandbox": [],
+    "images": false,
+    "system": "append"
+  },
+  "routes": ["explore", "build", "operate"],
+  "serves": [{ "effort": "quick" }],
+  "roles": ["worker", "verify", "tune"],
+  "rank": 1,
+  "cost": "subscription"
+}

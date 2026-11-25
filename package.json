@@ -1,0 +1,20 @@
+{
+  "name": "vicbot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "vic": "src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun src/cli.ts serve",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "latest"
+  },
+  "description": "A personal agent platform: one always-ready host, background tasks on pi, codex and omp.",
+  "license": "MIT"
+}

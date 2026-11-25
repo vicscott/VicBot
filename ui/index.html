@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VicBot</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <aside id="sidebar">
+      <header class="brand">
+        <span class="logo">V</span>
+        <span class="name">VicBot</span>
+        <span id="conn" class="conn" title="Live connection"></span>
+      </header>
+      <div class="filters" id="filters">
+        <button data-filter="active" class="on">Active</button>
+        <button data-filter="all">All</button>
+        <button data-filter="done">Done</button>
+      </div>
+      <ul id="task-list"></ul>
+      <footer id="sidebar-foot">
+        <div id="harness-status"></div>
+        <button id="devices-btn" class="ghost small" hidden>Devices</button>
+      </footer>
+    </aside>
+
+    <main id="host">
+      <header class="host-head">
+        <h1>Host</h1>
+        <span class="sub">Talk any time. Work runs in the background; you get a message when a task is done, blocked or failed.</span>
+      </header>
+      <ol id="thread"></ol>
+      <form id="composer" autocomplete="off">
+        <div class="target-row">
+          <span id="target" class="target">New task</span>
+          <button type="button" id="target-clear" class="ghost small" hidden>✕ new task instead</button>
+          <label id="interrupt-wrap" class="interrupt" hidden><input type="checkbox" id="interrupt" /> stop the current run and redirect</label>
+        </div>
+        <textarea id="input" rows="2" placeholder="Ask, delegate, or say “status”…  Enter sends · Shift+Enter for a new line"></textarea>
+        <div class="controls" id="new-controls">
+          <div class="seg" id="route-seg" role="radiogroup" aria-label="Route">
+            <button type="button" data-route="" class="on">Auto</button>
+            <button type="button" data-route="explore">Explore</button>
+            <button type="button" data-route="build">Build</button>
+            <button type="button" data-route="operate">Operate</button>
+          </div>
+          <div class="seg" id="effort-seg" role="radiogroup" aria-label="Effort">
+            <button type="button" data-effort="" class="on">Auto</button>
+            <button type="button" data-effort="quick">Quick</button>
+            <button type="button" data-effort="standard">Std</button>
+            <button type="button" data-effort="deep">Deep</button>
+          </div>
+          <span id="guess" class="guess"></span>
+          <input id="cwd" placeholder="Working dir (default: a scratch dir)" spellcheck="false" />
+          <button type="submit" id="send" class="primary">Send</button>
+        </div>
+      </form>
+    </main>
+
+    <section id="detail" hidden>
+      <header class="detail-head">
+        <div class="title-row">
+          <span id="d-dot" class="dot"></span>
+          <h2 id="d-title"></h2>
+          <button id="d-close" class="ghost small" title="Close">✕</button>
+        </div>
+        <div id="d-meta" class="meta"></div>
+        <div id="d-banners"></div>
+        <div class="actions">
+          <button id="d-message" class="small">Message this task</button>
+          <button id="d-trust" class="small">Grant more trust</button>
+          <button id="d-stop" class="small danger">Stop</button>
+        </div>
+      </header>
+      <div id="d-cards"></div>
+      <nav class="tabs" id="tabs">
+        <button data-tab="timeline" class="on">Timeline</button>
+        <button data-tab="runs">Runs</button>
+        <button data-tab="checks">Checks</button>
+        <button data-tab="contract">Contract</button>
+        <button data-tab="notes">Notes</button>
+      </nav>
+      <div id="pane"></div>
+    </section>
+
+    <dialog id="pair">
+      <form method="dialog" id="pair-form">
+        <h3>Pair this device</h3>
+        <p>On the VicBot machine run <code>vic pair</code> and enter the code here.</p>
+        <input id="pair-code" placeholder="Code" autocomplete="one-time-code" />
+        <input id="pair-name" placeholder="Device name" />
+        <p id="pair-error" class="error"></p>
+        <button class="primary" id="pair-go" value="go">Pair</button>
+      </form>
+    </dialog>
+
+    <dialog id="devices">
+      <form method="dialog">
+        <h3>Devices</h3>
+        <ul id="device-list"></ul>
+        <div class="row">
+          <select id="code-scope">
+            <option value="standard">standard</option>
+            <option value="notify">notify</option>
+            <option value="full">full</option>
+          </select>
+          <button type="button" id="new-code" class="small">New pairing code</button>
+          <code id="code-out"></code>
+        </div>
+        <button class="small" value="close">Close</button>
+      </form>
+    </dialog>
+
+    <script type="module" src="./app.ts"></script>
+  </body>
+</html>

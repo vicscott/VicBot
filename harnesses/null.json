@@ -1,0 +1,22 @@
+{
+  "id": "null",
+  "name": "null (test)",
+  "protocol": "1.0",
+  "entry": { "kind": "in-process", "module": "null", "cmd": ["null"] },
+  "probe": [],
+  "capabilities": {
+    "approvals": false,
+    "steering": false,
+    "resume": "none",
+    "effort": [],
+    "sandbox": [],
+    "images": false,
+    "system": "preamble"
+  },
+  "routes": ["explore", "build", "operate"],
+  "serves": [{}],
+  "roles": ["worker", "verify", "chair", "tune"],
+  "rank": 50,
+  "cost": "free",
+  "test": true
+}

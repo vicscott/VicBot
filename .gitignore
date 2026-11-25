@@ -1,0 +1,7 @@
+node_modules/
+.DS_Store
+reference/
+.vicbot/
+docs/vicbot-design.orig.html
+docs/reference-analysis.md
+docs/loop-comms-session.md

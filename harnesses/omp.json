@@ -1,0 +1,21 @@
+{
+  "id": "omp",
+  "name": "omp",
+  "protocol": "1.0",
+  "entry": { "kind": "in-process", "module": "omp", "cmd": ["omp"] },
+  "probe": ["--version"],
+  "capabilities": {
+    "approvals": false,
+    "steering": false,
+    "resume": "cursor",
+    "effort": ["low", "medium", "high"],
+    "sandbox": [],
+    "images": true,
+    "system": "append"
+  },
+  "routes": ["explore", "build", "operate"],
+  "serves": [{ "route": "build" }, { "effort": "deep" }],
+  "roles": ["worker", "verify", "chair"],
+  "rank": 2,
+  "cost": "subscription"
+}
