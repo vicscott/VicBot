@@ -37,6 +37,17 @@ export function instructions(): string {
   return read(join(dir(), "long", "instructions.md"));
 }
 
+/** Standing facts and instructions from the person (where they are, who they work for, how they like answers). Every bundle carries them. */
+export function setInstructions(text: string): string {
+  const body = text.replace(/\r/g, "").trim().slice(0, LIMITS.instructionsChars);
+  writeAtomic(join(dir(), "long", "instructions.md"), `# Standing instructions\n\n${body}${body ? "\n" : ""}`);
+  return body;
+}
+
+export function instructionsBody(): string {
+  return instructions().replace(/^# Standing instructions\s*/, "").trim();
+}
+
 export function progress(taskId: string): string {
   return read(join(shortDir(taskId), "progress.md"));
 }

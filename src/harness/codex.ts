@@ -4,10 +4,11 @@ import type { Adapter, HarnessRun, Manifest, RunSpec } from "./types";
 
 export function codexArgv(cmd: string[], spec: RunSpec): string[] {
   const effort = `model_reasoning_effort="${spec.policy.thinking}"`;
+  const web = spec.policy.web ? ["-c", 'web_search="live"'] : [];
   if (spec.resume) {
-    return [...cmd, "exec", "resume", spec.resume, "--json", "--skip-git-repo-check", "-c", `sandbox_mode="${spec.policy.sandbox}"`, "-c", effort, "-"];
+    return [...cmd, "exec", "resume", spec.resume, "--json", "--skip-git-repo-check", "-c", `sandbox_mode="${spec.policy.sandbox}"`, "-c", effort, ...web, "-"];
   }
-  return [...cmd, "exec", "--json", "--skip-git-repo-check", "-s", spec.policy.sandbox, "-c", effort, "-C", spec.cwd, "-"];
+  return [...cmd, "exec", "--json", "--skip-git-repo-check", "-s", spec.policy.sandbox, "-c", effort, ...web, "-C", spec.cwd, "-"];
 }
 
 export function codexParser(onSession: (id: string) => void) {
@@ -59,8 +60,10 @@ export function codexParser(onSession: (id: string) => void) {
       }
       case "turn.failed":
         return [{ kind: "error", text: String((line.error as Record<string, unknown> | undefined)?.message ?? "turn failed") }];
-      case "error":
-        return [{ kind: "error", text: String(line.message ?? "error") }];
+      case "error": {
+        const text = String(line.message ?? "error");
+        return [/unrecognized configuration|deprecated setting/i.test(text) ? { kind: "notice", text: `config: ${text}` } : { kind: "error", text }];
+      }
       default:
         return [];
     }

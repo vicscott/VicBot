@@ -10,6 +10,7 @@ interface Source {
   role: Role;
   protocol: string;
   policy: string;
+  generation: number;
 }
 
 export interface Rendered {
@@ -29,9 +30,13 @@ function section(md: string, name: string): string {
 }
 
 export function readSource(role: Role, dir = TEMPLATE_DIR): Source {
-  const md = readFileSync(join(dir, `${role}.md`), "utf8").replace(/^---[\s\S]*?---\n/, "");
-  return { role, protocol: section(md, "Protocol"), policy: section(md, "Policy") };
+  const raw = readFileSync(join(dir, `${role}.md`), "utf8");
+  const generation = Number(/^---[\s\S]*?^generation:\s*(\d+)/m.exec(raw)?.[1] ?? 1);
+  const md = raw.replace(/^---[\s\S]*?---\n/, "");
+  return { role, protocol: section(md, "Protocol"), policy: section(md, "Policy"), generation };
 }
+
+const generationOf = (row: TemplateRow) => row.generation ?? 1;
 
 export function commonProtocol(dir = TEMPLATE_DIR): string {
   return readFileSync(join(dir, "protocol.md"), "utf8").trim();
@@ -43,8 +48,9 @@ export function render(row: TemplateRow, common = commonProtocol()): string {
 }
 
 /**
- * Freezes generation 1 on first boot. Later edits to templates/*.md do not change v1; they are reported
- * so a developer can start a new generation on purpose (`vic templates reseed`).
+ * Freezes generation 1 on first boot. Later edits to templates/*.md do not change the frozen version;
+ * they are reported, unless the file's `generation:` is higher than the stored one. That is a deliberate
+ * new generation: it replaces every stored version (`vic templates reseed` does the same by hand).
  */
 export function seedTemplates(dir = TEMPLATE_DIR): string[] {
   const warnings: string[] = [];
@@ -58,13 +64,19 @@ export function seedTemplates(dir = TEMPLATE_DIR): string[] {
     const src = readSource(role, dir);
     const rows = store.templates(role);
     if (rows.length === 0) {
-      const row: TemplateRow = { role, version: 1, status: "active", protocol: src.protocol, policy: src.policy, hash: "", parent: null, runs: 0, passes: 0, createdAt: Date.now(), note: "generation 1" };
+      const row: TemplateRow = { role, version: 1, status: "active", protocol: src.protocol, policy: src.policy, hash: "", parent: null, runs: 0, passes: 0, createdAt: Date.now(), note: `generation ${src.generation}`, generation: src.generation };
       row.hash = hashText(render(row));
       store.putTemplate(row);
       continue;
     }
-    const v1 = rows[0]!;
-    if (v1.protocol !== src.protocol || v1.policy !== src.policy) warnings.push(`templates/${role}.md differs from frozen v1 (${v1.hash}); using the stored versions`);
+    const stored = Math.max(...rows.map(generationOf));
+    if (src.generation > stored) {
+      const row = reseed(role, dir);
+      warnings.push(`templates/${role}.md is generation ${src.generation}; ${role} v${row.version} ${row.hash} is now active`);
+      continue;
+    }
+    const base = rows.find((r) => generationOf(r) === stored && r.parent === null) ?? rows[0]!;
+    if (base.protocol !== src.protocol || base.policy !== src.policy) warnings.push(`templates/${role}.md differs from frozen v${base.version} (${base.hash}); using the stored versions. Bump its generation to replace them.`);
   }
   return warnings;
 }
@@ -75,7 +87,8 @@ export function reseed(role: Role, dir = TEMPLATE_DIR): TemplateRow {
   const rows = store.templates(role);
   for (const r of rows) if (r.status !== "retired") store.putTemplate({ ...r, status: "retired" });
   const src = readSource(role, dir);
-  const row: TemplateRow = { role, version: (rows.at(-1)?.version ?? 0) + 1, status: "active", protocol: src.protocol, policy: src.policy, hash: "", parent: null, runs: 0, passes: 0, createdAt: Date.now(), note: "reseeded from file" };
+  const generation = Math.max(src.generation, ...rows.map((r) => generationOf(r) + 1));
+  const row: TemplateRow = { role, version: (rows.at(-1)?.version ?? 0) + 1, status: "active", protocol: src.protocol, policy: src.policy, hash: "", parent: null, runs: 0, passes: 0, createdAt: Date.now(), note: `generation ${generation}, from file`, generation };
   row.hash = hashText(render(row));
   store.putTemplate(row);
   return row;
@@ -150,7 +163,7 @@ export function propose(role: Role, policy: string, note: string): TemplateRow {
   const changed = changedLines(active.policy, text);
   if (changed === 0) throw new Error("policy is unchanged");
   if (changed > TEMPLATE_TUNING.maxChangedLines) throw new Error(`policy changes ${changed} lines; at most ${TEMPLATE_TUNING.maxChangedLines} allowed`);
-  const row: TemplateRow = { role, version: (rows.at(-1)?.version ?? 0) + 1, status: "candidate", protocol: active.protocol, policy: text, hash: "", parent: active.version, runs: 0, passes: 0, createdAt: Date.now(), note: note.slice(0, 300) };
+  const row: TemplateRow = { role, version: (rows.at(-1)?.version ?? 0) + 1, status: "candidate", protocol: active.protocol, policy: text, hash: "", parent: active.version, runs: 0, passes: 0, createdAt: Date.now(), note: note.slice(0, 300), generation: generationOf(active) };
   row.hash = hashText(render(row));
   store.putTemplate(row);
   store.ledger({ taskId: null, runId: null, action: "template.propose", initiator: "keeper", device: null, detail: { role, version: row.version, parent: active.version, changed } });

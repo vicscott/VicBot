@@ -11,7 +11,7 @@ import { db } from "./store";
 import { seedTemplates } from "./templates";
 import { EFFORTS, ROUTES, TRUSTS, type BusMessage, type Effort, type Route, type Scope, type Trust } from "./types";
 import { runKeeper } from "./wake/keeper";
-import { ensureMemory } from "./wake/memory";
+import { ensureMemory, instructionsBody, setInstructions } from "./wake/memory";
 import { startTimers } from "./wake/timers";
 import { settleOrphans, startWorker } from "./wake/worker";
 
@@ -157,6 +157,10 @@ async function postEvent(req: Request, actor: Actor): Promise<unknown> {
     case "preview":
       result = decide(str(b.text, "text"));
       break;
+    case "profile":
+      if (actor.scope !== "full") throw new HttpError(403, "needs a full-scope device");
+      result = { text: setInstructions(typeof b.text === "string" ? b.text : "") };
+      break;
     case "keeper":
       if (actor.scope !== "full") throw new HttpError(403, "needs a full-scope device");
       result = runKeeper();
@@ -214,6 +218,7 @@ export function routes() {
     "/v1/tasks/:id": api((req) => taskDetail(req.params.id!)),
     "/v1/cards": api((req) => db().cards({ open: new URL(req.url).searchParams.get("open") === "1" })),
     "/v1/templates": api(() => db().templates()),
+    "/v1/profile": api(() => ({ text: instructionsBody() })),
     "/v1/events": { POST: api(postEvent) },
     "/v1/devices": api(() => db().devices(), { scope: "full" }),
     "/v1/devices/code": { POST: api(async (req) => createPairCode(opt<Scope>((await body(req)).scope, ["full", "standard", "notify"], "scope") ?? "standard"), { scope: "full" }) },

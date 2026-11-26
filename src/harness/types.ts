@@ -23,6 +23,8 @@ export interface Manifest {
     images: boolean;
     /** How the stable context reaches the model: an appended system prompt, or a preamble in the prompt. */
     system: "append" | "preamble";
+    /** Has a web search tool the adapter can turn on. */
+    web: boolean;
   };
   routes: Route[];
   /** Ordered rules; the first harness (by rank) with a matching rule serves the request. */
@@ -42,6 +44,8 @@ export interface HarnessPolicy {
   approvals: "never";
   thinking: "low" | "medium" | "high";
   network: boolean;
+  /** Turn on the harness's web search tool. */
+  web: boolean;
   maxToolCalls: number;
   maxMinutes: number;
 }

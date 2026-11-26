@@ -24,6 +24,8 @@ export const BOUNDS: Record<Effort, Budget> = {
 };
 
 export const LIMITS = {
+  /** The person's standing instructions, sent with every task. */
+  instructionsChars: 2000,
   sameCall: 3,
   sameError: 3,
   failingSteps: 4,

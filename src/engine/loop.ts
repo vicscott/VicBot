@@ -105,7 +105,7 @@ async function turn(task: Task, purpose: RunPurpose, ctx: TurnCtx): Promise<void
   const origin = ctx.origin ?? purpose;
   const role: Role = origin === "chair" ? "chair" : task.role;
   const serveRole = origin === "chair" ? "chair" : role === "tune" ? "tune" : "worker";
-  const h = selectHarness({ route: task.route!, effort: task.effort, role: serveRole, designated: task.designated });
+  const h = selectHarness({ route: task.route!, effort: task.effort, role: serveRole, designated: task.designated, web: task.web });
   if (!h) {
     const why = task.designated ? `@${task.designated} is not installed or not available` : `no available harness serves ${task.route}/${task.effort}`;
     store.transition(task.id, OPEN, "needs_route", {}, why);
@@ -117,7 +117,9 @@ async function turn(task: Task, purpose: RunPurpose, ctx: TurnCtx): Promise<void
   const res = reserve(root, task.effort);
   if (!res) return blockOnBudget(task, "the task's budget is used up");
   const trust = origin === "chair" || role === "tune" ? "read" : task.trust;
-  const policy = policyFor(task.effort, trust, res);
+  const web = !!task.web && h.manifest.capabilities.web;
+  if (task.web && !web && purpose === "work") store.event(task.id, null, { kind: "notice", text: `This task needs current facts, but ${harnessId} has no web search. The answer will rely on what the model already knows.` });
+  const policy = policyFor(task.effort, trust, res, web);
   const continuing = purpose === "continue" || purpose === "rework" || purpose === "verdict";
   const plan = strictResume(task, h, continuing);
   if (plan.kind === "recovery") store.event(task.id, null, { kind: "session", id: plan.session.id, state: "lost", note: plan.note });
@@ -388,11 +390,11 @@ async function review(task: Task, check: Extract<Check, { kind: "judge" }>, resu
   const store = db();
   const current = store.task(task.id) ?? task;
   const worker = current.harness;
-  const h = selectHarness({ route: current.route ?? "explore", effort: current.effort, role: "verify", exclude: worker ? [worker] : [] });
+  const h = selectHarness({ route: current.route ?? "explore", effort: current.effort, role: "verify", exclude: worker ? [worker] : [], web: current.web });
   if (!h) return { ok: true, detail: "no reviewer harness is available; the review was skipped" };
   const res = reserve(rootOf(current), "standard");
   if (!res) return { ok: false, detail: "no budget left for the review" };
-  const policy = policyFor("standard", "read", res);
+  const policy = policyFor("standard", "read", res, !!current.web && h.manifest.capabilities.web);
   const template = pick("verify");
   const artifacts = current.contract.artifacts.length ? `\nArtifacts to inspect: ${current.contract.artifacts.join(", ")}` : "";
   const bundle = buildBundle({

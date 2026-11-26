@@ -112,6 +112,8 @@ export interface Task {
   cwd: string;
   harness: string | null;
   designated: string | null;
+  /** Needs current facts from the web; only harnesses with web search serve it. */
+  web?: boolean;
   visited: Route[];
   escalated: boolean;
   renewals: number;
@@ -314,6 +316,8 @@ export interface TemplateRow {
   passes: number;
   createdAt: number;
   note: string | null;
+  /** Bumped only by a deliberate edit to templates/<role>.md; tuned versions inherit it. Missing means 1. */
+  generation?: number;
 }
 
 export type BusMessage =

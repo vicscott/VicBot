@@ -11,7 +11,8 @@
     "effort": ["low", "medium", "high"],
     "sandbox": ["read-only", "workspace-write", "danger-full-access"],
     "images": true,
-    "system": "preamble"
+    "system": "preamble",
+    "web": false
   },
   "routes": ["explore", "build", "operate"],
   "serves": [{ "route": "explore" }, { "route": "operate" }, { "role": "chair" }, { "role": "verify" }],

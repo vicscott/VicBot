@@ -8,7 +8,7 @@ const EDIT_TOOLS = "read,bash,edit,write,grep,glob";
 
 export function ompArgv(cmd: string[], spec: RunSpec, file: string | null): string[] {
   const argv = [...cmd, "-p", "--mode=json", "--no-title", "--approval-mode=yolo", `--thinking=${spec.policy.thinking}`, `--cwd=${spec.cwd}`, `--session-dir=${spec.sessionDir}`];
-  if (spec.policy.tools !== "all") argv.push(`--tools=${spec.policy.tools === "read" ? READ_TOOLS : EDIT_TOOLS}`);
+  if (spec.policy.tools !== "all") argv.push(`--tools=${spec.policy.tools === "read" ? READ_TOOLS : EDIT_TOOLS}${spec.policy.web ? ",web_search" : ""}`);
   if (spec.resume) argv.push(`--resume=${spec.resume}`);
   if (file) argv.push(`--append-system-prompt=${file}`);
   argv.push(`--max-time=${spec.policy.maxMinutes * 60}`);

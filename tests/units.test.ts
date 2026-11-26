@@ -1,8 +1,10 @@
 import { beforeEach, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { authenticate, createPairCode, redeemPairCode, revokeDevice } from "../src/auth";
-import { HARNESS_DIR } from "../src/config";
+import { HARNESS_DIR, TEMPLATE_DIR } from "../src/config";
+import { describeTool, stepOf, thought } from "../src/progress";
 import { buildBundle } from "../src/context/bundle";
 import { envelope } from "../src/context/envelope";
 import { fitContext } from "../src/context/budget";
@@ -11,7 +13,7 @@ import { createTask } from "../src/engine/create";
 import { LoopGuard } from "../src/engine/loopguard";
 import { lowerTrust, policyFor, selectHarness } from "../src/engine/policy";
 import { normalize, readVerdict, stripVerdict } from "../src/engine/verdict";
-import { codexArgv } from "../src/harness/codex";
+import { codexArgv, codexParser } from "../src/harness/codex";
 import { parseManifest } from "../src/harness/manifest";
 import { ompArgv } from "../src/harness/omp";
 import { piArgv } from "../src/harness/pi";
@@ -135,6 +137,59 @@ test("router: designation, shape and effort", () => {
   expect(route("break it down and build the api").shape).toBe("orchestrated");
   expect(route("implement the parser in src/parse.ts").route).toBe("build");
   expect(route("thoroughly research vector databases").effort).toBe("deep");
+});
+
+test("router: current facts need the web and at least standard effort; CJK counts heavier", () => {
+  const cohort = route("我现在做一些流行病学类的研究，需要申请各种数据库，具体要求是：1. 出生或者青少年队列 2. 至少有多组学数据。你看看有哪些我是可以申请的");
+  expect(cohort.web).toBe(true);
+  expect(cohort.effort).toBe("standard");
+  expect(route("what is a monad").web).toBe(false);
+  expect(route("what is a monad").effort).toBe("quick");
+  expect(route("explain the latest changes in this repo").web).toBe(false);
+  expect(route("研究一下为什么这个函数会慢，帮我看看原因，然后告诉我应该从哪里开始优化，最好给出几个方向和理由，并说明每个方向大概需要多少工作量和风险").effort).toBe("standard");
+});
+
+test("web tasks go to a harness with web search; the reviewer still differs", () => {
+  setHarnesses(installed(["pi", "codex", "omp"]));
+  expect(selectHarness({ route: "explore", effort: "quick", role: "worker", web: true })?.manifest.id).toBe("omp");
+  expect(selectHarness({ route: "explore", effort: "standard", role: "worker", web: true })?.manifest.id).toBe("omp");
+  expect(selectHarness({ route: "explore", effort: "standard", role: "verify", web: true, exclude: ["omp"] })?.manifest.id).toBe("codex");
+  setHarnesses(installed(["pi", "codex"]));
+  expect(selectHarness({ route: "explore", effort: "standard", role: "worker", web: true })?.manifest.id).toBe("codex");
+  const spec = { runId: "r", cwd: "/tmp", system: "S", prompt: "P", policy: policyFor("standard", "read", { toolCalls: 80, minutes: 15, cost: 1 }, true), resume: null, sessionDir: "/tmp/s" };
+  expect(ompArgv(["omp"], spec, null)).toContain("--tools=read,grep,glob,web_search");
+  expect(codexArgv(["codex"], spec)).toContain('web_search="live"');
+});
+
+test("progress steps read as plain words and hide bookkeeping", () => {
+  expect(describeTool("web_search", '{"query":"ABCD data access China"}')).toBe("Searching the web: “ABCD data access China”");
+  expect(describeTool("read", '{"path":"https://grants.nih.gov/grants/guide/notice-files/NOT-OD-25-083.html"}')).toStartWith("Opening grants.nih.gov/");
+  expect(describeTool("bash", `/bin/zsh -lc 'bun test'`)).toBe("Running `bun test`");
+  expect(describeTool("write", '{"path":"/tmp/p/.vicbot/verdict.json","content":"{\\"decision')).toBe("Filing its verdict");
+  expect(describeTool("read", '{"path":"/a/b/c/d.ts"}')).toBe("Reading …/c/d.ts");
+  expect(describeTool("read", '{"path":"local://0.log:514-532"}')).toBe("Rereading its earlier output");
+  expect(stepOf({ kind: "tool", id: "1", name: "ls", input: '{"path":"."}', phase: "end", ok: false }, "r1")).toEqual({ key: "r1:1", text: "Looking through .", tone: "bad" });
+  expect(stepOf({ kind: "usage", input: 1, output: 1, cacheRead: 0, cost: 0 })).toBeNull();
+  expect(codexParser(() => {})({ type: "error", message: "Codex is ignoring 1 unrecognized configuration setting." })).toEqual([{ kind: "notice", text: "config: Codex is ignoring 1 unrecognized configuration setting." }]);
+  expect(stepOf({ kind: "notice", text: "config: Codex is ignoring 1 unrecognized configuration setting." })).toBeNull();
+  expect(thought("**Checking source availability**\nmore")).toBe("Checking source availability");
+});
+
+test("a higher generation in the file replaces the stored templates", () => {
+  const dir = mkdtempSync(join(tmpdir(), "vbt-"));
+  cpSync(TEMPLATE_DIR, dir, { recursive: true });
+  const file = join(dir, "explore.md");
+  const before = db().templates("explore").find((r) => r.status === "active")!;
+  writeFileSync(file, readFileSync(file, "utf8").replace("- Lead with", "- Be brief.\n- Lead with"));
+  expect(seedTemplates(dir).some((w) => w.includes("differs"))).toBe(true);
+  expect(db().templates("explore").find((r) => r.status === "active")!.hash).toBe(before.hash);
+  const gen = Number(/generation: (\d+)/.exec(readFileSync(file, "utf8"))![1]);
+  writeFileSync(file, readFileSync(file, "utf8").replace(/generation: \d+/, `generation: ${gen + 1}`));
+  seedTemplates(dir);
+  const now = db().templates("explore").find((r) => r.status === "active")!;
+  expect(now.generation).toBe(gen + 1);
+  expect(now.policy).toContain("Be brief.");
+  expect(seedTemplates(dir).filter((w) => w.includes("explore"))).toEqual([]);
 });
 
 test("pairing: one-time codes, hashed tokens, scopes, revoke", () => {

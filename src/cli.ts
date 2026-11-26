@@ -21,6 +21,7 @@ const HELP = `vic — VicBot
   vic harness list                   installed harnesses and the route mapping
   vic templates                      template versions, hashes and pass rates
   vic templates reseed <role>        freeze templates/<role>.md as a new generation
+  vic profile [text]                 show or set what every task knows about you
   vic keeper                         run the keeper now
 
   VICBOT_URL and VICBOT_TOKEN point the CLI at a remote server.`;
@@ -147,6 +148,11 @@ async function main(argv: string[]): Promise<void> {
         return;
       }
       for (const t of await call<TemplateRow[]>("/v1/templates")) console.log(`${t.role.padEnd(8)} v${t.version} ${t.hash} ${t.status.padEnd(9)} ${t.passes}/${t.runs} passed${t.note ? ` · ${t.note}` : ""}`);
+      return;
+    }
+    case "profile": {
+      const r = text.trim() ? await event<{ text: string }>({ type: "profile", text }) : await call<{ text: string }>("/v1/profile");
+      console.log(r.text || "(empty) Set it with: vic profile \"I work at a university in Hong Kong…\"");
       return;
     }
     case "keeper":
