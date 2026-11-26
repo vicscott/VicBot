@@ -276,3 +276,21 @@ test("inside a conversation: messages stay there, status is about it, and an exp
   expect(other.row!.frame!.reason).toBe("asked-new");
   await idle();
 });
+
+test("a chosen new conversation always starts its own task, even for a follow-up or a quote", async () => {
+  const a = say("explain quickly what a monad is");
+  await idle();
+  const r = intake("and what about functors?", { fresh: true }, me);
+  expect(r.task).toBeDefined();
+  expect(r.task!.id).not.toBe(a.id);
+  expect(r.row!.frame).toMatchObject({ decision: "new", taskId: r.task!.id, reason: "chosen" });
+  await idle();
+  const report = db().thread().find((x) => x.kind === "report" && x.taskId === a.id)!;
+  const q = intake("turn this into a poem", { fresh: true, quote: { rowId: report.id } }, me);
+  expect(q.task).toBeDefined();
+  expect(q.task!.goal).toContain("> Quoting VicBot's earlier reply");
+  const s = intake("status", { fresh: true, context: a.id }, me);
+  expect(s.task).toBeUndefined();
+  expect(db().thread().at(-1)!.taskId).toBeNull();
+  await idle();
+});

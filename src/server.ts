@@ -131,6 +131,7 @@ async function postEvent(req: Request, actor: Actor): Promise<unknown> {
         {
           taskId: typeof b.taskId === "string" && b.taskId ? b.taskId : undefined,
           context: typeof b.context === "string" && b.context ? b.context : undefined,
+          fresh: b.fresh === true,
           quote: quoteOf(b.quote),
           route: opt<Route>(b.route, ROUTES, "route"),
           effort: opt<Effort>(b.effort, EFFORTS, "effort"),
@@ -173,7 +174,7 @@ async function postEvent(req: Request, actor: Actor): Promise<unknown> {
       const q = quoteOf(b.quote);
       const quoteTask = q ? (db().threadRow(q.rowId)?.taskId ?? null) : null;
       const context = typeof b.context === "string" && b.context ? b.context : null;
-      result = { ...decide(text), frame: decideFrame({ text, quoteTask, context, configured: !!(b.route || b.effort) }) };
+      result = { ...decide(text), frame: decideFrame({ text, quoteTask, context, fresh: b.fresh === true, configured: !!(b.route || b.effort) }) };
       break;
     }
     case "profile":

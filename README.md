@@ -3,6 +3,7 @@
 A personal agent platform. You talk to one host that is always ready; the work runs in the background on coding-agent CLIs, gets checked by a different agent, and comes back as a short report.
 
 - **Always ready.** The composer is never disabled and no message is rejected. A message to a busy task is queued as a note for its next turn (you can withdraw it); tick "stop and redirect" to interrupt. "status" is answered from the store, without a model call.
+- **One Home for everyone.** Home shows every message, yours and VicBot's, grouped under labels for their conversations; the sidebar lists the conversations. Just type in Home and VicBot decides where each message belongs. You stay in Home, and the matching sidebar entry lights up. Click "＋ New conversation" when you want to start one yourself: the next message always becomes its own task, and that is where route, effort and working folder can be picked (`vic say --new`, and `vic run` always starts new).
 - **Conversations are framed for you.** Type anywhere. A follow-up ("and…", "那…", "why…"), a quote, a `#task` mention or a message on the same topic continues its conversation and lights it up in the sidebar; anything else starts a new conversation with its own entry. "thanks"/"好的" is noted without a new run, and "new task: …" always starts fresh. Every placed message shows why it went there, with one-click "Make it a new task" or "Move to #…" to correct it (`vic reframe`).
 - **Quote any message.** Hover a message (yours or VicBot's) and click Quote; select part of it first to quote only that part. The worker receives the quoted text, and quoting a conversation's message sends your reply there.
 - **Visible progress, without the noise.** Each task gets a live card in the chat: what it is doing now in plain words ("Searching the web: …", "Reading …", "Running `bun test`"), the last few steps, a clock, and Details/Message/Stop. Raw output stays in the task's timeline. The card shrinks to one line when the task ends.
@@ -57,7 +58,7 @@ What happens on its own:
 ## CLI
 
 ```
-vic serve | run <text> [--route r --effort e --cwd d --wait] | say <text> [--task id --interrupt]
+vic serve | run <text> [--route r --effort e --cwd d --wait] | say <text> [--task id --new --interrupt]
 vic reframe <message id> new|<task>
 vic ls | show <id> | cancel <id> | route <text> | cards | answer <card> [option] [--text t]
 vic pair [--scope full|standard|notify] | harness list | templates [reseed <role>] | profile [text] | keeper

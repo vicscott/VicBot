@@ -23,6 +23,8 @@ export interface IntakeOptions {
   taskId?: string;
   /** The conversation the person is looking at; framing leans towards it. */
   context?: string;
+  /** The person chose to start a new conversation; framing is skipped. */
+  fresh?: boolean;
   /** An earlier thread row being quoted, optionally just a selected part of it. */
   quote?: { rowId: number; text?: string };
   route?: Route;
@@ -113,12 +115,12 @@ export function intake(text: string, opts: IntakeOptions, actor: Actor): IntakeR
     return { note, row };
   }
   if (!quote && isStatusQuestion(clean)) {
-    const here = opts.context ? conversationOf(opts.context) : null;
+    const here = opts.context && !opts.fresh ? conversationOf(opts.context) : null;
     const row = personSaid(clean, here?.id ?? null);
     hostSay(here ? taskStatus(here) : statusSummary(), here?.id ?? null);
     return { row };
   }
-  const decision = decideFrame({ text: clean, quoteTask: quote?.taskId, context: opts.context, configured: !!(opts.route || opts.effort) });
+  const decision = decideFrame({ text: clean, quoteTask: quote?.taskId, context: opts.fresh ? undefined : opts.context, fresh: opts.fresh, configured: !!(opts.route || opts.effort) });
   ledger(decision.taskId ? db().task(decision.taskId) : null, "frame", actor, { ...decision });
   if (decision.decision === "ack") return { row: personSaid(clean, decision.taskId, quote, { ...decision, noteId: null }) };
   if (decision.decision === "continue") {

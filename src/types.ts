@@ -260,7 +260,7 @@ export interface Quote {
   text: string;
 }
 
-export type FrameReason = "explicit" | "context" | "quote" | "mention" | "followup" | "similar" | "ack" | "new" | "asked-new" | "stopped" | "split" | "merged";
+export type FrameReason = "explicit" | "context" | "quote" | "mention" | "followup" | "similar" | "ack" | "new" | "asked-new" | "chosen" | "stopped" | "split" | "merged";
 
 export interface Frame {
   decision: "continue" | "new" | "ack";

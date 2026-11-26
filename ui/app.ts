@@ -80,9 +80,11 @@ const state = {
   cards: new Map<string, Card>(),
   rows: new Map<number, ThreadRow>(),
   lastThread: 0,
-  /** The open conversation (a root task id); null is the initial window. */
+  /** The open conversation (a root task id); null is Home, which shows every message. */
   view: null as string | null,
-  /** Host messages per conversation that arrived while it was not open; "" is the initial window. */
+  /** The person chose "New conversation": an empty view whose next message starts its own task. */
+  fresh: false,
+  /** Host messages per conversation that arrived while it was not open; "" is Home's own messages. */
   unread: new Map<string, number>(),
   touched: new Map<string, number>(),
   flash: null as string | null,
@@ -163,38 +165,53 @@ function toast(text: string): void {
 }
 
 // ── conversations ────────────────────────────────────────────────────────
-// A conversation is a root task with everything said about it. The initial window holds what belongs to none.
+// A conversation is a root task with everything said about it. Home shows every message, grouped by conversation.
 
 const rootId = (taskId: string) => state.tasks.get(taskId)?.rootId ?? taskId;
 const convOf = (row: ThreadRow): string | null => (row.taskId ? rootId(row.taskId) : null);
 const visible = (t: Task) => !t.meta?.mergedInto;
+const atHome = () => state.view === null && !state.fresh;
+/** Whether a message belongs on screen in the current view. */
+const shows = (row: ThreadRow) => (state.fresh ? false : state.view === null || convOf(row) === state.view);
 
 function lastTouched(id: string): number {
   return Math.max(state.tasks.get(id)?.updatedAt ?? 0, state.touched.get(id) ?? 0);
 }
 
-function openConversation(id: string | null, opts: { flash?: boolean; keepDetail?: boolean } = {}): void {
+function openConversation(id: string | null, opts: { flash?: boolean; keepDetail?: boolean; fresh?: boolean } = {}): void {
   state.view = id;
-  if (id) state.unread.delete(id);
+  state.fresh = !id && !!opts.fresh;
+  state.unread.delete(id ?? "");
   const q = new URLSearchParams(location.search);
   q.delete("task");
   if (id) q.set("c", id);
   else q.delete("c");
   history.replaceState(null, "", `${location.pathname}${q.size ? `?${q}` : ""}`);
   if (!opts.keepDetail && state.detail && rootId(state.detail.task.id) !== id) void select(null);
-  if (opts.flash && id) {
-    state.flash = id;
-    setTimeout(() => {
-      if (state.flash === id) state.flash = null;
-      renderList();
-    }, 1600);
-  }
+  if (opts.flash && id) flashEntry(id);
   renderList();
   renderHead();
-  renderThread();
+  renderThread(true);
   updateComposer();
   if (state.quote) setQuote(state.quote);
   els.input.focus();
+}
+
+/** Draws the eye to a conversation entry, e.g. where a message from Home went. */
+function flashEntry(id: string): void {
+  state.flash = id;
+  setTimeout(() => {
+    if (state.flash === id) state.flash = null;
+    renderList();
+  }, 1600);
+  renderList();
+}
+
+/** Where a message landed: Home stays put and points at the entry; elsewhere the conversation opens. */
+function landed(conv: string | null): void {
+  if (atHome()) {
+    if (conv) flashEntry(conv);
+  } else if (conv !== state.view) openConversation(conv, { flash: true });
 }
 
 // ── sidebar ──────────────────────────────────────────────────────────────
@@ -203,12 +220,17 @@ function renderList(): void {
   const all = [...state.tasks.values()].filter(visible);
   const shown = all.filter((t) => (state.filter === "all" ? true : state.filter === "done" ? FINAL.includes(t.status) : !FINAL.includes(t.status) || Date.now() - lastTouched(t.id) < 30 * 60_000 || t.id === state.view));
   const roots = shown.filter((t) => !t.parentId || !state.tasks.has(t.parentId)).sort((a, b) => lastTouched(b.id) - lastTouched(a.id));
-  const fresh = h("li", `new-conv ${state.view === null ? "sel" : ""}`);
-  fresh.append(h("span", "plus", "＋"), h("span", "t", "New conversation"));
+  const home = h("li", `new-conv home ${atHome() ? "sel" : ""}`);
+  home.append(h("span", "plus", "⌂"), h("span", "t", "Home"));
   const hostUnread = state.unread.get("") ?? 0;
-  if (hostUnread) fresh.append(h("span", "unread", String(hostUnread)));
-  fresh.onclick = () => openConversation(null);
-  const items: HTMLElement[] = [fresh];
+  if (hostUnread) home.append(h("span", "unread", String(hostUnread)));
+  home.title = "Every message in one place. Type here and VicBot decides which conversation it belongs to.";
+  home.onclick = () => openConversation(null);
+  const fresh = h("li", `new-conv ${state.fresh ? "sel" : ""}`);
+  fresh.append(h("span", "plus", "＋"), h("span", "t", "New conversation"));
+  fresh.title = "Start a conversation of your own: the next message always becomes a new task.";
+  fresh.onclick = startFresh;
+  const items: HTMLElement[] = [home, fresh];
   const add = (t: Task, depth: number) => {
     const conv = depth === 0;
     const li = h("li", `${conv && t.id === state.view ? "sel" : ""} ${depth ? "child" : ""} ${state.flash === t.id ? "flash" : ""} ${!depth && state.detail?.task.id === t.id ? "" : ""}`);
@@ -233,7 +255,7 @@ function renderList(): void {
     for (const c of all.filter((x) => x.parentId === t.id).sort((a, b) => a.createdAt - b.createdAt)) if (depth < 3) add(c, depth + 1);
   };
   for (const t of roots) add(t, 0);
-  if (items.length === 1) items.push(h("li", "sub empty", state.filter === "active" ? "Nothing running." : "No conversations yet."));
+  if (items.length === 2) items.push(h("li", "sub empty", state.filter === "active" ? "Nothing running." : "No conversations yet."));
   els.list.replaceChildren(...items);
 }
 
@@ -253,10 +275,12 @@ function renderHarnesses(): void {
 
 function renderHead(): void {
   const t = state.view ? state.tasks.get(state.view) : null;
-  els.headTitle.textContent = t ? t.title : "New conversation";
+  els.headTitle.textContent = t ? t.title : state.fresh ? "New conversation" : "Home";
   els.headSub.textContent = t
     ? `#${t.id} · ${t.status.replace(/_/g, " ")}${t.harness ? ` · ${t.harness}` : ""}`
-    : "Talk any time. VicBot puts each message in the right conversation: a follow-up continues one, a new topic starts its own.";
+    : state.fresh
+      ? "Your next message starts its own conversation. Pick a route, effort or folder if you like; Auto is fine."
+      : "Everything you and VicBot said. Just type: a follow-up goes back to its conversation, a new topic starts one. Conversations are on the left.";
   els.headDetails.hidden = !t;
 }
 
@@ -351,7 +375,7 @@ function quoteBlock(q: Quote): HTMLElement {
 function jumpTo(rowId: number, taskId: string | null): void {
   const row = state.rows.get(rowId);
   const conv = row ? convOf(row) : taskId ? rootId(taskId) : null;
-  if (conv !== state.view) openConversation(conv);
+  if (row ? !shows(row) : conv !== state.view) openConversation(conv);
   const node = els.thread.querySelector<HTMLElement>(`[data-row="${rowId}"]`);
   if (!node) return;
   node.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -359,22 +383,36 @@ function jumpTo(rowId: number, taskId: string | null): void {
   setTimeout(() => node.classList.remove("hl"), 1500);
 }
 
-const FRAME_TEXT: Partial<Record<FrameReason, string>> = {
-  followup: "Continued here: it reads as a follow-up to the last conversation",
-  similar: "Continued here: same topic",
-  quote: "Continued here: you quoted this conversation",
-  mention: "Continued here: you mentioned it",
-  "asked-new": "New conversation, as you asked",
-  stopped: "New conversation: the one you were in was stopped",
-  split: "Split into its own conversation",
-  merged: "Moved here",
+const WHY: Partial<Record<FrameReason, string>> = {
+  followup: "it reads as a follow-up to the last conversation",
+  similar: "same topic",
+  quote: "you quoted it",
+  mention: "you mentioned it",
+  "asked-new": "as you asked",
+  stopped: "the one you were in was stopped",
 };
+
+/** Why a message went where it did, phrased for the view it is shown in. */
+function frameText(row: ThreadRow): string | null {
+  const f = row.frame!;
+  const conv = convOf(row);
+  const title = conv ? (state.tasks.get(conv)?.title ?? "") : "";
+  const name = conv ? `#${conv}${title ? ` ${title.length > 36 ? `${title.slice(0, 35)}…` : title}` : ""}` : "";
+  const alt = f.alt && state.tasks.get(f.alt);
+  if (f.reason === "split") return atHome() ? `Split into its own conversation, ${name}` : "Split into its own conversation";
+  if (f.reason === "merged") return atHome() ? `Moved to ${name}` : "Moved here";
+  const why = WHY[f.reason];
+  if (f.decision === "continue") return why ? (atHome() ? `Went to ${name}: ${why}` : `Continued here: ${why}`) : null;
+  if (f.decision !== "new") return null;
+  if (why) return `New conversation, ${why}`;
+  return f.reason === "new" && alt ? `New conversation. Related to #${f.alt} ${alt.title}?` : null;
+}
 
 function frameChip(row: ThreadRow): HTMLElement | null {
   const f = row.frame;
-  if (!f) return null;
+  if (!f || f.reason === "chosen") return null;
   const alt = f.alt && state.tasks.get(f.alt);
-  const text = FRAME_TEXT[f.reason] ?? (f.reason === "new" && alt ? `New conversation. Related to #${f.alt} ${alt.title}?` : null);
+  const text = frameText(row);
   if (!text) return null;
   const chip = h("div", "frame");
   chip.append(h("span", "", `↪ ${text}`));
@@ -386,7 +424,8 @@ function frameChip(row: ThreadRow): HTMLElement | null {
         const r = await send<{ row?: ThreadRow }>({ type: "reframe", rowId: row.id, to });
         if (r.row) {
           state.rows.set(r.row.id, r.row);
-          openConversation(convOf(r.row), { flash: true });
+          if (atHome()) renderThread();
+          landed(convOf(r.row));
         }
       } catch (err) {
         toast((err as Error).message);
@@ -468,10 +507,35 @@ function turnStart(rows: ThreadRow[]): ThreadRow | null {
 }
 
 function viewRows(): ThreadRow[] {
-  return [...state.rows.values()].filter((r) => r.delivery !== "suppressed" && convOf(r) === state.view).sort((a, b) => a.id - b.id);
+  return [...state.rows.values()].filter((r) => r.delivery !== "suppressed" && shows(r)).sort((a, b) => a.id - b.id);
 }
 
-function renderThread(): void {
+/** The row a conversation's progress card follows: the "Started #…" reply to its current turn, or the turn itself. */
+function anchorOf(rows: ThreadRow[]): { turn: ThreadRow | null; anchor: number | undefined } {
+  const turn = turnStart(rows);
+  const at = turn ? rows.findIndex((r) => r.id === turn.id) : -1;
+  const next = at >= 0 ? rows[at + 1] : undefined;
+  return { turn, anchor: next && next.author === "host" && next.kind === "status" && /^Started #/.test(next.text) ? next.id : turn?.id };
+}
+
+/** Home's label above a run of messages from one conversation; a click opens it. */
+function convTag(id: string): HTMLElement {
+  const t = state.tasks.get(id);
+  const li = h("li", "conv-tag");
+  li.dataset.conv = id;
+  const b = h("button", "ghost small");
+  b.append(h("span", `dot ${t?.status ?? ""}`), h("span", "", `#${id}${t ? ` · ${t.title}` : ""}`));
+  b.title = "Open this conversation";
+  b.onclick = () => openConversation(id);
+  li.append(b);
+  return li;
+}
+
+/** The conversation of the last message on screen in Home, so a live message knows whether it needs a label. */
+let lastTag: string | null = null;
+
+function renderThread(toBottom = false): void {
+  const stick = toBottom || els.thread.scrollHeight - els.thread.scrollTop - els.thread.clientHeight < 200;
   const rows = viewRows();
   const nodes: HTMLElement[] = [];
   const t = state.view ? state.tasks.get(state.view) : null;
@@ -480,24 +544,42 @@ function renderThread(): void {
     li.append(h("div", "p-text", t.goal));
     nodes.push(li);
   }
-  const turn = turnStart(rows);
-  const a = t ? ensureActivity(t) : null;
-  const at = turn ? rows.findIndex((r) => r.id === turn.id) : -1;
-  const next = at >= 0 ? rows[at + 1] : undefined;
-  const anchor = next && next.author === "host" && next.kind === "status" && /^Started #/.test(next.text) ? next.id : turn?.id;
+  const live: { a: Activity; turn: ThreadRow | null }[] = [];
+  const after = new Map<number, Activity>();
+  const pending: Activity[] = [];
+  const place = (conv: Task, own: ThreadRow[]) => {
+    const a = ensureActivity(conv);
+    const { turn, anchor } = anchorOf(own);
+    live.push({ a, turn });
+    if (anchor !== undefined) after.set(anchor, a);
+    else pending.push(a);
+  };
+  if (t) place(t, rows);
+  else if (atHome())
+    for (const c of state.tasks.values()) {
+      if (c.rootId !== c.id || !visible(c) || FINAL.includes(c.status)) continue;
+      place(c, rows.filter((r) => convOf(r) === c.id));
+    }
+  lastTag = null;
   for (const row of rows) {
+    const conv = convOf(row);
+    if (atHome() && conv && conv !== lastTag) nodes.push(convTag(conv));
+    if (atHome()) lastTag = conv;
     const n = threadNode(row);
     if (n) nodes.push(n);
-    if (a && anchor !== undefined && row.id === anchor) nodes.push(a.el);
+    const a = after.get(row.id);
+    if (a) nodes.push(a.el);
   }
-  if (a && !turn) nodes.splice(Math.min(1, nodes.length), 0, a.el);
-  if (!state.view && !nodes.length) nodes.push(h("li", "host status", "Hi. Tell me what to take off your plate. Quick things go to pi, exploratory work to codex, heavy work to omp. Follow-ups go back to their conversation; you can keep talking while they run."));
+  if (t) nodes.splice(Math.min(1, nodes.length), 0, ...pending.map((a) => a.el));
+  else nodes.push(...pending.map((a) => a.el));
+  if (atHome() && !rows.length) nodes.push(h("li", "host status", "Hi. Tell me what to take off your plate. Just type here: a follow-up goes back to its conversation and a new topic gets its own. Quick things go to pi, exploratory work to codex, heavy work to omp, and you can keep talking while they run."));
+  if (state.fresh) nodes.push(h("li", "host status", "A new conversation. Your next message starts its own task, whatever it says. Quoting a message brings it along as context."));
   els.thread.replaceChildren(...nodes);
-  if (a) {
+  for (const { a, turn } of live) {
     a.turnAt = turn?.ts ?? 0;
     renderActivity(a);
   }
-  els.thread.scrollTop = els.thread.scrollHeight;
+  if (stick) els.thread.scrollTop = els.thread.scrollHeight;
 }
 
 function addThread(row: ThreadRow): void {
@@ -507,7 +589,7 @@ function addThread(row: ThreadRow): void {
   const conv = convOf(row);
   if (conv) state.touched.set(conv, Math.max(state.touched.get(conv) ?? 0, row.ts));
   if (known) return renderThread();
-  if (conv !== state.view) {
+  if (!shows(row)) {
     if (row.author === "host" && row.delivery !== "suppressed" && (row.kind === "report" || row.kind === "card" || row.kind === "say")) state.unread.set(conv ?? "", (state.unread.get(conv ?? "") ?? 0) + 1);
     renderListSoon();
     return;
@@ -517,6 +599,8 @@ function addThread(row: ThreadRow): void {
   if (row.author === "host" && row.kind === "status" && /^Started #/.test(row.text)) return renderThread();
   const node = threadNode(row);
   if (!node) return;
+  if (atHome() && conv && conv !== lastTag) els.thread.append(convTag(conv));
+  if (atHome()) lastTag = conv;
   els.thread.append(node);
   if (stick) els.thread.scrollTop = els.thread.scrollHeight;
   renderListSoon();
@@ -673,7 +757,7 @@ function setQuote(q: Quote | null): void {
   state.quote = q;
   els.quote.hidden = !q;
   if (q) {
-    const where = q.taskId && rootId(q.taskId) !== state.view ? ` · #${rootId(q.taskId)} (your message goes to that conversation)` : "";
+    const where = !state.fresh && q.taskId && rootId(q.taskId) !== state.view ? ` · #${rootId(q.taskId)} (your message goes to that conversation)` : "";
     els.quoteWho.textContent = `Quoting ${q.author === "person" ? "yourself" : "VicBot"}${where}`;
     els.quoteText.textContent = q.text.length > 280 ? `${q.text.slice(0, 279)}…` : q.text;
   }
@@ -684,17 +768,24 @@ function setQuote(q: Quote | null): void {
 function updateComposer(): void {
   const t = state.view ? state.tasks.get(state.view) : null;
   els.form.classList.toggle("to-task", !!t);
-  els.target.textContent = t ? `In #${t.id} · ${t.title}` : "New conversation";
-  els.targetClear.hidden = !t;
-  for (const el of [els.routeSeg, els.effortSeg, els.cwd]) el.hidden = !!t;
+  els.form.classList.toggle("fresh", state.fresh);
+  els.target.textContent = t ? `In #${t.id} · ${t.title}` : state.fresh ? "New conversation" : "Home · VicBot decides where this goes";
+  els.targetClear.hidden = state.fresh;
+  for (const el of [els.routeSeg, els.effortSeg, els.cwd]) el.hidden = !state.fresh;
   els.interruptWrap.hidden = !t || !["working", "verifying"].includes(t.status);
   if (!t) els.interrupt.checked = false;
   els.input.placeholder = t
     ? ["working", "verifying"].includes(t.status)
       ? "It is working; your message reaches it on its next turn. Tick the box to stop the current run and redirect."
       : "Follow up here. It continues this task with what it already knows."
-    : "Ask, delegate, or say “status”…  Enter sends · Shift+Enter for a new line";
+    : state.fresh
+      ? "Describe the new task…  Enter sends · Shift+Enter for a new line"
+      : "Ask anything, follow up, or say “status”…  Enter sends · Shift+Enter for a new line";
   preview();
+}
+
+function startFresh(): void {
+  openConversation(null, { fresh: true });
 }
 
 function setTarget(id: string | null): void {
@@ -725,18 +816,19 @@ function preview(): void {
   if (!text) return void (els.guess.textContent = "");
   previewTimer = setTimeout(async () => {
     try {
-      const d = await api<Preview>("/v1/events", { type: "preview", text, context: state.view ?? undefined, route: (!state.view && state.route) || undefined, effort: (!state.view && state.effort) || undefined, quote: state.quote ? { rowId: state.quote.rowId } : undefined });
+      const d = await api<Preview>("/v1/events", { type: "preview", text, context: state.view ?? undefined, fresh: state.fresh || undefined, route: (state.fresh && state.route) || undefined, effort: (state.fresh && state.effort) || undefined, quote: state.quote ? { rowId: state.quote.rowId } : undefined });
       const f = d.frame;
       if (f && f.decision !== "new") {
         if (f.taskId === state.view) return void (els.guess.textContent = f.decision === "ack" ? "→ noted, no new run" : "");
         const t = state.tasks.get(f.taskId);
         return void (els.guess.textContent = `→ continues #${f.taskId}${t ? ` ${t.title.slice(0, 40)}` : ""}`);
       }
-      const route = state.route || d.route;
-      const effort = state.effort || d.effort;
+      const picked = state.fresh ? state.route : "";
+      const route = picked || d.route;
+      const effort = (state.fresh && state.effort) || d.effort;
       const harness = route ? state.meta?.mapping[`${route}/${effort}`] : null;
-      const lead = state.view ? "→ new conversation · " : "→ ";
-      els.guess.textContent = route ? `${lead}${route} · ${effort}${d.designated ? ` · @${d.designated}` : harness ? ` · ${harness}` : ""}${state.route ? "" : ` (${Math.round(d.confidence * 100)}%)`}` : `${lead}will ask you`;
+      const lead = state.fresh ? "→ " : "→ new conversation · ";
+      els.guess.textContent = route ? `${lead}${route} · ${effort}${d.designated ? ` · @${d.designated}` : harness ? ` · ${harness}` : ""}${picked ? "" : ` (${Math.round(d.confidence * 100)}%)`}` : `${lead}will ask you`;
     } catch {}
   }, 250);
 }
@@ -751,13 +843,14 @@ async function submit(): Promise<void> {
   try {
     const r = state.view
       ? await send<{ row?: ThreadRow }>({ type: "say", text, context: state.view, interrupt: els.interrupt.checked, quote: q })
-      : await send<{ row?: ThreadRow }>({ type: "say", text, route: state.route || undefined, effort: state.effort || undefined, cwd: els.cwd.value.trim() || undefined, quote: q });
+      : state.fresh
+        ? await send<{ row?: ThreadRow }>({ type: "say", text, fresh: true, route: state.route || undefined, effort: state.effort || undefined, cwd: els.cwd.value.trim() || undefined, quote: q })
+        : await send<{ row?: ThreadRow }>({ type: "say", text, quote: q });
     els.interrupt.checked = false;
     setQuote(null);
     if (r.row) {
       addThread(r.row);
-      const conv = convOf(r.row);
-      if (conv !== state.view) openConversation(conv, { flash: true });
+      landed(convOf(r.row));
     }
   } catch (err) {
     els.input.value = text;
@@ -1008,6 +1101,8 @@ function onMessage(m: BusMessage): void {
         renderHead();
         updateComposer();
       }
+      for (const dot of els.thread.querySelectorAll(`li.conv-tag[data-conv="${m.task.id}"] .dot`)) dot.className = `dot ${m.task.status}`;
+      if (atHome() && m.task.rootId === m.task.id && !FINAL.includes(m.task.status) && !activity.has(m.task.id)) renderThread();
       return;
     case "event":
       track(m.taskId, m.event);
@@ -1172,10 +1267,10 @@ els.input.onkeydown = (e) => {
     void submit();
   }
   if (e.key === "Escape" && state.quote) setQuote(null);
-  else if (e.key === "Escape" && state.view) openConversation(null);
+  else if (e.key === "Escape" && !atHome()) openConversation(null);
 };
 els.input.oninput = preview;
-els.targetClear.onclick = () => openConversation(null);
+els.targetClear.onclick = startFresh;
 els.quoteClear.onclick = () => setQuote(null);
 els.headDetails.onclick = () => state.view && select(state.view);
 seg(els.routeSeg, "route", (v) => ((state.route = v as Route | ""), preview()));

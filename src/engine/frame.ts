@@ -82,6 +82,8 @@ export interface FrameInput {
   context?: string | null;
   /** The person picked a route or effort by hand, which only makes sense for a new task. */
   configured?: boolean;
+  /** The person chose "New conversation": the message starts its own task whatever it says. */
+  fresh?: boolean;
   now?: number;
 }
 
@@ -100,6 +102,7 @@ export function decideFrame(input: FrameInput, pool?: Candidate[]): Decision {
   const now = input.now ?? Date.now();
   const text = input.text.trim();
   const usable = (t: Task | null): t is Task => !!t && t.status !== "cancelled" && !t.meta.mergedInto;
+  if (input.fresh) return frame("new", "", "chosen", 1);
   if (NEW.test(text)) return frame("new", "", "asked-new", 1);
   if (input.quoteTask) {
     const t = conversationOf(input.quoteTask);

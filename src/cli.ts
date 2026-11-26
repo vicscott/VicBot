@@ -10,7 +10,7 @@ const HELP = `vic — VicBot
 
   vic serve                          start the server and the web UI
   vic run <text> [--route r] [--effort e] [--cwd dir] [--wait]
-  vic say <text> [--task id] [--interrupt]   talk to the host (framed into a conversation), or to a task
+  vic say <text> [--task id] [--new] [--interrupt]   talk to the host (framed into a conversation), to a task, or start a new one
   vic reframe <message id> new|<task>         move a message to a new or another conversation
   vic ls                             list tasks
   vic show <id>                      a task with its runs, checks and notes
@@ -71,6 +71,7 @@ async function main(argv: string[]): Promise<void> {
       scope: { type: "string" },
       wait: { type: "boolean" },
       interrupt: { type: "boolean" },
+      new: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -82,7 +83,7 @@ async function main(argv: string[]): Promise<void> {
       return;
     case "run": {
       if (!text) throw new Error("usage: vic run <text>");
-      const r = await event<{ task?: Task }>({ type: "say", text, route: values.route, effort: values.effort, cwd: values.cwd ?? process.cwd() });
+      const r = await event<{ task?: Task }>({ type: "say", text, fresh: true, route: values.route, effort: values.effort, cwd: values.cwd ?? process.cwd() });
       if (!r.task) return console.log("(answered by the host; see the thread)");
       console.log(line(r.task));
       if (values.wait) {
@@ -93,7 +94,7 @@ async function main(argv: string[]): Promise<void> {
     }
     case "say": {
       if (!text) throw new Error("usage: vic say <text>");
-      const r = await event<{ task?: Task; note?: { id: string; taskId: string }; row?: { id: number; frame?: { decision: string; taskId: string; reason: string; alt: string | null } | null } }>({ type: "say", text, taskId: values.task, interrupt: values.interrupt });
+      const r = await event<{ task?: Task; note?: { id: string; taskId: string }; row?: { id: number; frame?: { decision: string; taskId: string; reason: string; alt: string | null } | null } }>({ type: "say", text, taskId: values.task, fresh: values.new, interrupt: values.interrupt });
       const f = r.row?.frame;
       if (f && !values.task) console.log(`framed: ${f.decision} #${f.taskId} (${f.reason})${f.alt ? ` · close call: #${f.alt}` : ""} · move it with: vic reframe ${r.row!.id} new|<task>`);
       if (r.note) console.log(`queued note ${r.note.id} for #${r.note.taskId}`);
