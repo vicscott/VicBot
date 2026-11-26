@@ -14,8 +14,8 @@
         <span id="conn" class="conn" title="Live connection"></span>
       </header>
       <div class="filters" id="filters">
-        <button data-filter="active" class="on">Active</button>
-        <button data-filter="all">All</button>
+        <button data-filter="all" class="on">All</button>
+        <button data-filter="active">Active</button>
         <button data-filter="done">Done</button>
       </div>
       <ul id="task-list"></ul>
@@ -27,16 +27,21 @@
 
     <main id="host">
       <header class="host-head">
-        <h1>Host</h1>
-        <span class="sub">Talk any time. Work runs in the background; each task shows its progress here and reports when it is done, blocked or failed.</span>
+        <h1 id="head-title">Home</h1>
+        <span class="sub" id="head-sub"></span>
+        <button id="head-details" class="ghost small" type="button" hidden>Details</button>
         <button id="profile-btn" class="ghost small" type="button">About you</button>
       </header>
       <ol id="thread"></ol>
       <form id="composer" autocomplete="off">
         <div class="target-row">
-          <span id="target" class="target">New task</span>
-          <button type="button" id="target-clear" class="ghost small" hidden>✕ new task instead</button>
+          <span id="target" class="target">Home · VicBot decides where this goes</span>
+          <button type="button" id="target-clear" class="ghost small" hidden>＋ New conversation</button>
           <label id="interrupt-wrap" class="interrupt" hidden><input type="checkbox" id="interrupt" /> stop the current run and redirect</label>
+        </div>
+        <div id="quote" class="quote-chip" hidden>
+          <div class="qc-body"><span id="quote-who" class="qc-who"></span><span id="quote-text" class="qc-text"></span></div>
+          <button type="button" id="quote-clear" class="ghost small" title="Remove quote">✕</button>
         </div>
         <textarea id="input" rows="2" placeholder="Ask, delegate, or say “status”…  Enter sends · Shift+Enter for a new line"></textarea>
         <div class="controls" id="new-controls">

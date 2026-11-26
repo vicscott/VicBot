@@ -3,8 +3,9 @@ import index from "../ui/index.html";
 import { allowedHosts, authenticate, createPairCode, redeemPairCode, revokeDevice } from "./auth";
 import { bus } from "./bus";
 import { BOUNDS, HOST, LIMITS, PORT, ROUTE_THRESHOLD } from "./config";
+import { decideFrame } from "./engine/frame";
 import { selectHarness } from "./engine/policy";
-import { answerCard, assignRoute, cancel, editContract, grantTrust, intake, withdraw, type Actor } from "./engine/tasks";
+import { answerCard, assignRoute, cancel, editContract, grantTrust, intake, reframe, withdraw, type Actor } from "./engine/tasks";
 import { harnesses, loadHarnesses } from "./harness/registry";
 import { route as decide } from "./router";
 import { db } from "./store";
@@ -67,6 +68,13 @@ function str(v: unknown, field: string): string {
   return v;
 }
 
+function quoteOf(v: unknown): { rowId: number; text?: string } | undefined {
+  if (v === undefined || v === null) return undefined;
+  const q = v as Record<string, unknown>;
+  if (typeof q !== "object" || !Number.isInteger(q.rowId)) throw new Error("quote needs a rowId");
+  return { rowId: q.rowId as number, text: typeof q.text === "string" ? q.text.slice(0, 20_000) : undefined };
+}
+
 function opt<T extends string>(v: unknown, values: readonly T[], field: string): T | undefined {
   if (v === undefined || v === null || v === "") return undefined;
   if (!values.includes(v as T)) throw new Error(`unknown ${field} ${String(v)}`);
@@ -122,6 +130,9 @@ async function postEvent(req: Request, actor: Actor): Promise<unknown> {
         str(b.text, "text"),
         {
           taskId: typeof b.taskId === "string" && b.taskId ? b.taskId : undefined,
+          context: typeof b.context === "string" && b.context ? b.context : undefined,
+          fresh: b.fresh === true,
+          quote: quoteOf(b.quote),
           route: opt<Route>(b.route, ROUTES, "route"),
           effort: opt<Effort>(b.effort, EFFORTS, "effort"),
           cwd: typeof b.cwd === "string" && b.cwd.trim() ? b.cwd.trim() : undefined,
@@ -130,6 +141,10 @@ async function postEvent(req: Request, actor: Actor): Promise<unknown> {
         },
         actor,
       );
+      break;
+    case "reframe":
+      needWrite();
+      result = reframe(Number(b.rowId), str(b.to, "to"), actor);
       break;
     case "route":
       needWrite();
@@ -154,9 +169,14 @@ async function postEvent(req: Request, actor: Actor): Promise<unknown> {
     case "answer":
       result = answerCard(str(b.cardId, "cardId"), typeof b.option === "string" && b.option ? b.option : null, typeof b.text === "string" ? b.text : null, actor);
       break;
-    case "preview":
-      result = decide(str(b.text, "text"));
+    case "preview": {
+      const text = str(b.text, "text");
+      const q = quoteOf(b.quote);
+      const quoteTask = q ? (db().threadRow(q.rowId)?.taskId ?? null) : null;
+      const context = typeof b.context === "string" && b.context ? b.context : null;
+      result = { ...decide(text), frame: decideFrame({ text, quoteTask, context, fresh: b.fresh === true, configured: !!(b.route || b.effort) }) };
       break;
+    }
     case "profile":
       if (actor.scope !== "full") throw new HttpError(403, "needs a full-scope device");
       result = { text: setInstructions(typeof b.text === "string" ? b.text : "") };

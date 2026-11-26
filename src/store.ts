@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS inbox (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id 
 CREATE UNIQUE INDEX IF NOT EXISTS inbox_dedupe ON inbox(dedupe) WHERE dedupe IS NOT NULL;
 CREATE INDEX IF NOT EXISTS inbox_pending ON inbox(status, task_id);
 CREATE TABLE IF NOT EXISTS timers (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT, kind TEXT NOT NULL, due_at INTEGER NOT NULL, every_minutes INTEGER, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'armed');
-CREATE TABLE IF NOT EXISTS thread (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, author TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, task_id TEXT, card_id TEXT, pointer TEXT, delivery TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS thread (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, author TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, task_id TEXT, card_id TEXT, pointer TEXT, delivery TEXT NOT NULL, quote TEXT, frame TEXT);
 CREATE TABLE IF NOT EXISTS cards (id TEXT PRIMARY KEY, task_id TEXT, status TEXT NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, run_id TEXT, ts INTEGER NOT NULL, data TEXT NOT NULL);
@@ -54,6 +54,22 @@ export function newId(prefix = ""): string {
 type Row = Record<string, unknown>;
 const parse = <T>(row: Row | null | undefined): T | null => (row ? (JSON.parse(row.data as string) as T) : null);
 
+function toThread(r: Row): ThreadRow {
+  return {
+    id: r.id as number,
+    ts: r.ts as number,
+    author: r.author as ThreadRow["author"],
+    kind: r.kind as ThreadRow["kind"],
+    text: r.text as string,
+    taskId: (r.task_id as string | null) ?? null,
+    cardId: (r.card_id as string | null) ?? null,
+    pointer: (r.pointer as string | null) ?? null,
+    delivery: r.delivery as ThreadRow["delivery"],
+    quote: r.quote ? (JSON.parse(r.quote as string) as ThreadRow["quote"]) : null,
+    frame: r.frame ? (JSON.parse(r.frame as string) as ThreadRow["frame"]) : null,
+  };
+}
+
 export class Store {
   readonly db: Database;
 
@@ -62,6 +78,25 @@ export class Store {
     this.db = new Database(path, { create: true, strict: true });
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;");
     this.db.exec(SCHEMA);
+    this.migrate();
+  }
+
+  /** Additive migrations for databases created by earlier versions. */
+  private migrate(): void {
+    const cols = new Set((this.db.query("PRAGMA table_info(thread)").all() as Row[]).map((c) => c.name as string));
+    for (const col of ["quote", "frame"]) if (!cols.has(col)) this.db.exec(`ALTER TABLE thread ADD COLUMN ${col} TEXT`);
+    if (!cols.has("frame")) this.attachOrphans();
+  }
+
+  /** Before conversations, a message that started a task was stored without its task. Attach it once. */
+  private attachOrphans(): void {
+    const orphans = this.db.query("SELECT id, text FROM thread WHERE author = 'person' AND task_id IS NULL").all() as Row[];
+    for (const o of orphans) {
+      const next = this.db.query("SELECT task_id FROM thread WHERE id > ? AND id <= ? AND task_id IS NOT NULL ORDER BY id LIMIT 1").get(o.id as number, (o.id as number) + 3) as Row | null;
+      const task = next ? this.task(next.task_id as string) : null;
+      const text = (o.text as string).trim();
+      if (task && !task.parentId && (task.goal === text || text.endsWith(task.goal))) this.db.query("UPDATE thread SET task_id = ?, pointer = ? WHERE id = ?").run(task.id, `task:${task.id}`, o.id as number);
+    }
   }
 
   tx<T>(fn: () => T): T {
@@ -257,26 +292,36 @@ export class Store {
   addThread(row: Omit<ThreadRow, "id" | "ts">): ThreadRow {
     const ts = Date.now();
     const res = this.db
-      .query("INSERT INTO thread (ts, author, kind, text, task_id, card_id, pointer, delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(ts, row.author, row.kind, row.text, row.taskId, row.cardId, row.pointer, row.delivery);
-    const full: ThreadRow = { ...row, id: Number(res.lastInsertRowid), ts };
+      .query("INSERT INTO thread (ts, author, kind, text, task_id, card_id, pointer, delivery, quote, frame) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(ts, row.author, row.kind, row.text, row.taskId, row.cardId, row.pointer, row.delivery, row.quote ? JSON.stringify(row.quote) : null, row.frame ? JSON.stringify(row.frame) : null);
+    const full: ThreadRow = { ...row, quote: row.quote ?? null, frame: row.frame ?? null, id: Number(res.lastInsertRowid), ts };
     bus.emit({ type: "thread", row: full });
     return full;
   }
 
+  /** Moves a person's message to another conversation (the person corrected the framing). */
+  reframeRow(id: number, taskId: string, frame: ThreadRow["frame"]): ThreadRow | null {
+    this.db.query("UPDATE thread SET task_id = ?, pointer = ?, frame = ? WHERE id = ?").run(taskId, `task:${taskId}`, frame ? JSON.stringify(frame) : null, id);
+    const row = this.threadRow(id);
+    if (row) bus.emit({ type: "thread", row });
+    return row;
+  }
+
+  threadRow(id: number): ThreadRow | null {
+    const r = this.db.query("SELECT * FROM thread WHERE id = ?").get(id) as Row | null;
+    return r ? toThread(r) : null;
+  }
+
+  /** The newest rows about any of these tasks, newest last. */
+  threadFor(taskIds: string[], limit = 50): ThreadRow[] {
+    if (!taskIds.length) return [];
+    const marks = taskIds.map(() => "?").join(", ");
+    return (this.db.query(`SELECT * FROM thread WHERE task_id IN (${marks}) ORDER BY id DESC LIMIT ?`).all(...taskIds, limit) as Row[]).reverse().map(toThread);
+  }
+
   thread(after = 0, limit = 200): ThreadRow[] {
     const rows = this.db.query("SELECT * FROM thread WHERE id > ? ORDER BY id DESC LIMIT ?").all(after, limit) as Row[];
-    return rows.reverse().map((r) => ({
-      id: r.id as number,
-      ts: r.ts as number,
-      author: r.author as ThreadRow["author"],
-      kind: r.kind as ThreadRow["kind"],
-      text: r.text as string,
-      taskId: (r.task_id as string | null) ?? null,
-      cardId: (r.card_id as string | null) ?? null,
-      pointer: (r.pointer as string | null) ?? null,
-      delivery: r.delivery as ThreadRow["delivery"],
-    }));
+    return rows.reverse().map(toThread);
   }
 
   // ── cards: first answer wins ───────────────────────────────────────────

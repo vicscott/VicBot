@@ -1,12 +1,13 @@
-import { BOUNDS, ROUTE_THRESHOLD } from "../config";
+import { BOUNDS, LIMITS, ROUTE_THRESHOLD } from "../config";
 import { route as decide } from "../router";
 import { db, newId } from "../store";
-import { FINAL, ROUTES, TRUSTS, type Card, type Contract, type Effort, type Mode, type Note, type Route, type Scope, type Task, type Trust } from "../types";
+import { FINAL, ROUTES, TRUSTS, type Card, type Contract, type Effort, type Frame, type Mode, type Note, type Quote, type Route, type Scope, type Task, type ThreadRow, type Trust } from "../types";
 import { kick } from "../wake/kick";
 import { archiveNote } from "../wake/keeper";
 import { validateContract, propose } from "./contract";
-import { createTask } from "./create";
-import { hostSay, isStatusQuestion, openCard, personSaid, statusSummary } from "./host";
+import { createTask, titleOf } from "./create";
+import { conversationOf, decideFrame } from "./frame";
+import { hostSay, isStatusQuestion, openCard, personSaid, started, statusSummary, taskStatus, withQuote } from "./host";
 import { killRun, live } from "./live";
 import { reworkBlock } from "./loop";
 import { defaultTrust, selectHarness } from "./policy";
@@ -18,7 +19,14 @@ export interface Actor {
 }
 
 export interface IntakeOptions {
+  /** An explicit target: the message goes to this task, no framing. */
   taskId?: string;
+  /** The conversation the person is looking at; framing leans towards it. */
+  context?: string;
+  /** The person chose to start a new conversation; framing is skipped. */
+  fresh?: boolean;
+  /** An earlier thread row being quoted, optionally just a selected part of it. */
+  quote?: { rowId: number; text?: string };
   route?: Route;
   effort?: Effort;
   cwd?: string;
@@ -37,11 +45,15 @@ function ledger(task: Task | null, action: string, actor: Actor, detail: Record<
 }
 
 /** Creates and routes a task. Below the router threshold it waits in needs_route with a card. */
-export function submit(text: string, opts: IntakeOptions, actor: Actor): Task {
+export function submit(text: string, opts: IntakeOptions, actor: Actor, extra: { quote?: Quote | null; onCreated?: (task: Task) => void } = {}): Task {
   const d = decide(text);
-  const route = opts.route ?? (d.confidence >= ROUTE_THRESHOLD ? d.route : null);
-  const effort = opts.effort ?? d.effort;
-  const task = createTask({ goal: d.text.trim() || text, route, effort, shape: d.shape, designated: d.designated, web: d.web, cwd: opts.cwd, mode: opts.mode });
+  const quoted = extra.quote?.taskId ? conversationOf(extra.quote.taskId) : null;
+  const route = opts.route ?? (d.confidence >= ROUTE_THRESHOLD ? d.route : null) ?? quoted?.route ?? null;
+  const effort = opts.effort ?? (quoted && !d.route ? quoted.effort : d.effort);
+  const web = d.web || (!d.route && !!quoted?.web);
+  const ask = d.text.trim() || text;
+  const task = createTask({ goal: withQuote(ask, extra.quote ?? null), title: titleOf(ask), route, effort, shape: d.shape, designated: d.designated, web, cwd: opts.cwd, mode: opts.mode });
+  extra.onCreated?.(task);
   ledger(task, "task.create", actor, { route, effort, shape: d.shape, confidence: d.confidence });
   if (!route) {
     openCard({
@@ -54,34 +66,111 @@ export function submit(text: string, opts: IntakeOptions, actor: Actor): Task {
     });
     return task;
   }
-  const h = selectHarness({ route, effort, role: d.shape === "orchestrated" ? "chair" : "worker", designated: d.designated, web: d.web });
-  db().event(task.id, null, { kind: "route", route, effort, shape: d.shape, harness: h?.manifest.id ?? "none", confidence: opts.route ? 1 : d.confidence, reason: opts.route ? "chosen by you" : d.reason });
+  const h = selectHarness({ route, effort, role: d.shape === "orchestrated" ? "chair" : "worker", designated: d.designated, web });
+  const inherited = !opts.route && route !== d.route && quoted;
+  db().event(task.id, null, { kind: "route", route, effort, shape: d.shape, harness: h?.manifest.id ?? "none", confidence: opts.route ? 1 : inherited ? 1 : d.confidence, reason: opts.route ? "chosen by you" : inherited ? `same route as quoted #${quoted.id}` : d.reason });
   db().event(task.id, null, { kind: "user", text: task.goal, via: actor.device });
   db().enqueue(task.id, "start", { initiator: "person" }, `start:${task.id}`);
   kick();
   return task;
 }
 
+const squash = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+/** Quotes come from the store, not the client: a selected part must actually appear in that message. */
+export function resolveQuote(q: { rowId: number; text?: string }): Quote {
+  const store = db();
+  const row = store.threadRow(Number(q.rowId));
+  if (!row || row.delivery === "suppressed") throw new Error("that message is not in the thread");
+  const own = row.kind === "report" ? row.text.slice(row.text.indexOf("\n") + 1) : row.text;
+  const part = (q.text ?? "").trim();
+  if (part && squash(part)) {
+    const sources = [row.text, row.taskId ? (store.task(row.taskId)?.result ?? "") : ""];
+    if (!sources.some((s) => squash(s).includes(squash(part)))) throw new Error("the quoted text is not in that message");
+  }
+  const text = (part && squash(part) ? part : own).trim();
+  return { rowId: row.id, author: row.author, taskId: row.taskId, text: text.length > LIMITS.quoteChars ? `${text.slice(0, LIMITS.quoteChars - 1)}…` : text };
+}
+
+export interface IntakeResult {
+  task?: Task;
+  note?: Note;
+  row?: ThreadRow;
+}
+
 /**
- * Everything the person says goes through here, and it always returns at once: a status question is
- * answered from the store, a message to a task becomes a note, anything else becomes a task.
+ * Everything the person says goes through here, and it always returns at once. A status question is
+ * answered from the store. Anything else is framed: it continues a conversation (a note to its task)
+ * or starts a new one (a new task with its own sidebar entry).
  */
-export function intake(text: string, opts: IntakeOptions, actor: Actor): { task?: Task; note?: Note } {
+export function intake(text: string, opts: IntakeOptions, actor: Actor): IntakeResult {
   const clean = text.trim();
   if (!clean) throw new Error("empty message");
-  personSaid(clean, opts.taskId ?? null);
-  if (opts.taskId) return { note: message(opts.taskId, clean, opts.interrupt ? "interrupt" : "push", actor) };
-  if (isStatusQuestion(clean)) {
-    hostSay(statusSummary());
-    return {};
+  const quote = opts.quote ? resolveQuote(opts.quote) : null;
+  const body = withQuote(clean, quote);
+  const mode = opts.interrupt ? "interrupt" : "push";
+  if (opts.taskId) {
+    const note = message(opts.taskId, body, mode, actor);
+    const row = personSaid(clean, opts.taskId, quote, { decision: "continue", taskId: opts.taskId, reason: "explicit", confidence: 1, alt: null, noteId: note.id });
+    return { note, row };
   }
-  const task = submit(clean, opts, actor);
-  if (task.route) {
-    const h = db().events(task.id).find((e) => e.event.kind === "route")?.event;
-    const via = h?.kind === "route" ? h.harness : "?";
-    hostSay(`Started #${task.id}: ${task.route} · ${task.effort}${task.shape !== "single" ? ` · ${task.shape}` : ""} → ${via}. I'll report when it's done.`, task.id, "status");
+  if (!quote && isStatusQuestion(clean)) {
+    const here = opts.context && !opts.fresh ? conversationOf(opts.context) : null;
+    const row = personSaid(clean, here?.id ?? null);
+    hostSay(here ? taskStatus(here) : statusSummary(), here?.id ?? null);
+    return { row };
   }
-  return { task };
+  const decision = decideFrame({ text: clean, quoteTask: quote?.taskId, context: opts.fresh ? undefined : opts.context, fresh: opts.fresh, configured: !!(opts.route || opts.effort) });
+  ledger(decision.taskId ? db().task(decision.taskId) : null, "frame", actor, { ...decision });
+  if (decision.decision === "ack") return { row: personSaid(clean, decision.taskId, quote, { ...decision, noteId: null }) };
+  if (decision.decision === "continue") {
+    const note = message(decision.taskId, body, mode, actor);
+    return { note, row: personSaid(clean, decision.taskId, quote, { ...decision, noteId: note.id }) };
+  }
+  let row: ThreadRow | undefined;
+  const task = submit(clean, opts, actor, { quote, onCreated: (t) => (row = personSaid(clean, t.id, quote, { ...decision, taskId: t.id, noteId: null })) });
+  announce(task);
+  return { task, row };
+}
+
+function announce(task: Task): void {
+  const h = db().events(task.id).find((e) => e.event.kind === "route")?.event;
+  started(task, h?.kind === "route" ? h.harness : "?");
+}
+
+/**
+ * The person moves a message to another conversation: "new" splits it into a new task, a task id merges
+ * it into that conversation. The first placement is undone where it still can be: a queued note is
+ * withdrawn, and a task the message started is stopped and hidden.
+ */
+export function reframe(rowId: number, to: string, actor: Actor): IntakeResult {
+  const store = db();
+  const row = store.threadRow(rowId);
+  if (!row || row.author !== "person" || !row.frame) throw new Error("that message cannot be moved");
+  const from: Frame = row.frame;
+  const target = to === "new" ? null : conversationOf(to);
+  if (to !== "new" && (!target || target.status === "cancelled" || target.meta.mergedInto)) throw new Error(`#${to} cannot take messages`);
+  if (target && target.id === from.taskId) throw new Error("the message is already there");
+  if (!target && from.decision === "new") throw new Error("the message already started its own task");
+  if (from.decision === "new") {
+    const made = store.task(from.taskId);
+    if (made && !FINAL.includes(made.status)) cancel(made.id, actor);
+    const now = store.task(from.taskId);
+    if (now) store.putTask({ ...now, meta: { ...now.meta, mergedInto: target!.id } });
+  } else if (from.noteId && store.note(from.noteId)?.status === "queued") {
+    withdraw(from.noteId, actor);
+  }
+  ledger(target ?? store.task(from.taskId), "reframe", actor, { rowId, from: from.taskId, to });
+  const body = withQuote(row.text, row.quote ?? null);
+  if (target) {
+    const note = message(target.id, body, "push", actor);
+    const moved = store.reframeRow(rowId, target.id, { decision: "continue", taskId: target.id, reason: "merged", confidence: 1, alt: null, noteId: note.id })!;
+    return { note, row: moved };
+  }
+  let moved: ThreadRow | undefined;
+  const task = submit(row.text, {}, actor, { quote: row.quote ?? null, onCreated: (t) => (moved = store.reframeRow(rowId, t.id, { decision: "new", taskId: t.id, reason: "split", confidence: 1, alt: null, noteId: null })!) });
+  announce(task);
+  return { task, row: moved };
 }
 
 /**

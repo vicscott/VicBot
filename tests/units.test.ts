@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { authenticate, createPairCode, redeemPairCode, revokeDevice } from "../src/auth";
 import { HARNESS_DIR, TEMPLATE_DIR } from "../src/config";
 import { describeTool, stepOf, thought } from "../src/progress";
+import { decideFrame, overlap, terms, type Candidate } from "../src/engine/frame";
 import { buildBundle } from "../src/context/bundle";
 import { envelope } from "../src/context/envelope";
 import { fitContext } from "../src/context/budget";
@@ -208,4 +209,22 @@ test("pairing: one-time codes, hashed tokens, scopes, revoke", () => {
 test("memory: one fact per file, manifest rebuilt from files", () => {
   remember("t1", { key: "Editor Pref", text: "uses vim", scope: "long", subject: "editor" });
   expect(rebuildManifest()).toContain("editor-pref [editor]: uses vim");
+});
+
+test("framing heuristics: CJK bigrams, follow-up words, and close calls", () => {
+  const cohort = createTask({ goal: "我现在做一些流行病学类的研究，需要申请各种数据库：出生或者青少年队列，至少有多组学数据（脑影像，行为量表，测序等）", route: "explore", effort: "standard" });
+  const bun = createTask({ goal: "What is the latest stable version of Bun and what changed in it?", route: "explore", effort: "standard" });
+  const now = Date.now();
+  const pool: Candidate[] = [
+    { task: cohort, touched: now - 60 * 60_000, topic: terms(cohort.goal) },
+    { task: bun, touched: now - 60_000, topic: terms(bun.goal) },
+  ];
+  expect(overlap(terms("哪些青少年队列有脑影像数据"), terms(cohort.goal))).toBeGreaterThan(0.4);
+  expect(decideFrame({ text: "哪些青少年队列有脑影像和测序数据", now }, pool)).toMatchObject({ decision: "continue", taskId: cohort.id, reason: "similar" });
+  expect(decideFrame({ text: "那它的发布说明在哪里？", now }, pool)).toMatchObject({ decision: "continue", taskId: bun.id, reason: "followup" });
+  expect(decideFrame({ text: "那这些队列里，哪个对香港的研究者最容易申请？", now }, pool)).toMatchObject({ decision: "continue", taskId: cohort.id, alt: bun.id });
+  expect(decideFrame({ text: "Write a limerick about cats", now }, pool)).toMatchObject({ decision: "new", alt: null });
+  expect(decideFrame({ text: "新问题：哪些青少年队列有脑影像", now }, pool)).toMatchObject({ decision: "new", reason: "asked-new" });
+  expect(decideFrame({ text: "ok thanks", now }, pool).reason).toBe("ack");
+  expect(decideFrame({ text: "how does Bun compare to Deno", now: now + 2 * 60 * 60_000 }, pool)).toMatchObject({ decision: "new" });
 });
