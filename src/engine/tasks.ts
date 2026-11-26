@@ -4,13 +4,15 @@ import { db, newId } from "../store";
 import { FINAL, ROUTES, TRUSTS, type Card, type Contract, type Effort, type Frame, type Mode, type Note, type Quote, type Route, type Scope, type Task, type ThreadRow, type Trust } from "../types";
 import { kick } from "../wake/kick";
 import { archiveNote } from "../wake/keeper";
+import { remember } from "../wake/memory";
 import { validateContract, propose } from "./contract";
 import { createTask, titleOf } from "./create";
 import { conversationOf, decideFrame } from "./frame";
+import { developGoal, ideaGoal, isIdea } from "./intent";
 import { hostSay, isStatusQuestion, openCard, personSaid, started, statusSummary, taskStatus, withQuote } from "./host";
 import { killRun, live } from "./live";
 import { reworkBlock } from "./loop";
-import { defaultTrust, selectHarness } from "./policy";
+import { defaultTrust, lowerTrust, selectHarness } from "./policy";
 import { settle } from "./settle";
 
 export interface Actor {
@@ -123,14 +125,74 @@ export function intake(text: string, opts: IntakeOptions, actor: Actor): IntakeR
   const decision = decideFrame({ text: clean, quoteTask: quote?.taskId, context: opts.fresh ? undefined : opts.context, fresh: opts.fresh, configured: !!(opts.route || opts.effort) });
   ledger(decision.taskId ? db().task(decision.taskId) : null, "frame", actor, { ...decision });
   if (decision.decision === "ack") return { row: personSaid(clean, decision.taskId, quote, { ...decision, noteId: null }) };
+  const idea = !opts.route && !opts.effort && !opts.interrupt && isIdea(clean);
+  if (decision.decision === "continue" && idea && FINAL.includes(need(decision.taskId).status)) {
+    const note = message(decision.taskId, body, "fold", actor);
+    const row = personSaid(clean, decision.taskId, quote, { ...decision, noteId: note.id });
+    openCard({ taskId: decision.taskId, kind: "idea", title: `Kept your idea in #${decision.taskId}`, body: "It goes into this conversation's next turn. Nothing runs now.", options: [{ id: "work", label: "Work on it now" }, { id: "keep", label: "Just keep it" }], allowText: false });
+    return { note, row };
+  }
   if (decision.decision === "continue") {
     const note = message(decision.taskId, body, mode, actor);
     return { note, row: personSaid(clean, decision.taskId, quote, { ...decision, noteId: note.id }) };
   }
   let row: ThreadRow | undefined;
-  const task = submit(clean, opts, actor, { quote, onCreated: (t) => (row = personSaid(clean, t.id, quote, { ...decision, taskId: t.id, noteId: null })) });
+  const onCreated = (t: Task) => (row = personSaid(clean, t.id, quote, { ...decision, taskId: t.id, noteId: null }));
+  if (idea) return { task: submitIdea(clean, opts, actor, quote, onCreated), row };
+  const task = submit(clean, opts, actor, { quote, onCreated });
   announce(task);
   return { task, row };
+}
+
+/** An idea gets a short reaction from the quick route, and is kept in memory. Nothing heavy runs. */
+function submitIdea(idea: string, opts: IntakeOptions, actor: Actor, quote: Quote | null, onCreated: (t: Task) => void): Task {
+  const store = db();
+  const task = createTask({ goal: withQuote(ideaGoal(idea), quote), title: titleOf(idea), route: "explore", effort: "quick", web: false, cwd: opts.cwd, mode: opts.mode, meta: { kind: "idea", idea } });
+  onCreated(task);
+  ledger(task, "task.create", actor, { route: "explore", effort: "quick", idea: true });
+  remember(task.id, { key: `idea-${task.id}`, subject: "ideas", text: idea, scope: "long" });
+  const h = selectHarness({ route: "explore", effort: "quick", role: "worker" });
+  store.event(task.id, null, { kind: "route", route: "explore", effort: "quick", shape: "single", harness: h?.manifest.id ?? "none", confidence: 1, reason: "an idea, not a task: a quick reaction, nothing heavy runs" });
+  store.event(task.id, null, { kind: "user", text: idea, via: actor.device });
+  store.enqueue(task.id, "start", { initiator: "person" }, `start:${task.id}`);
+  hostSay(`Noted your idea as #${task.id}. ${h ? h.manifest.id : "A quick worker"} will react briefly; nothing heavy runs unless you ask.`, task.id, "status");
+  kick();
+  return task;
+}
+
+/** The person takes an idea further: the same conversation moves to a real route with a standard budget. */
+export function developIdea(taskId: string, route: Route, actor: Actor): Task {
+  const store = db();
+  const task = need(taskId);
+  if (task.meta.kind !== "idea") throw new Error(`#${taskId} is not an idea`);
+  if (!FINAL.includes(task.status) || task.status === "cancelled") throw new Error(`#${taskId} is ${task.status.replace(/_/g, " ")}`);
+  const effort: Effort = "standard";
+  const idea = task.meta.idea ?? task.title;
+  const goal = developGoal(idea, route);
+  const add = BOUNDS[effort];
+  const updated = store.transition(taskId, ["done", "failed", "blocked"], "queued", {
+    route,
+    effort,
+    role: route,
+    goal,
+    trust: lowerTrust(task.ceiling, defaultTrust(route)),
+    visited: [route],
+    contract: propose(goal, route, effort),
+    contractTier: "auto",
+    web: decide(idea).web,
+    reworks: 0,
+    meta: { ...task.meta, kind: "idea-developed" },
+    budget: { toolCalls: task.budget.toolCalls + add.toolCalls * 3, minutes: task.budget.minutes + add.minutes * 3, cost: task.budget.cost + add.cost * 3 },
+  }, `developing the idea on ${route}`);
+  if (!updated) throw new Error(`#${taskId} changed; try again`);
+  const h = selectHarness({ route, effort, role: "worker", web: updated.web });
+  store.event(taskId, null, { kind: "route", route, effort, shape: "single", harness: h?.manifest.id ?? "none", confidence: 1, reason: "you asked to take the idea further" });
+  store.event(taskId, null, { kind: "user", text: goal, via: actor.device });
+  store.enqueue(taskId, "start", { initiator: "person" }, `develop:${taskId}:${route}`);
+  ledger(updated, "idea.develop", actor, { route });
+  started(updated, h?.manifest.id ?? "?");
+  kick();
+  return updated;
 }
 
 function announce(task: Task): void {
@@ -177,7 +239,7 @@ export function reframe(rowId: number, to: string, actor: Actor): IntakeResult {
  * A message to a task. Push (default) queues it for the next turn; interrupt stops the current run
  * and continues at once with the message. Nothing is ever rejected because a run is busy.
  */
-export function message(taskId: string, text: string, mode: "push" | "interrupt", actor: Actor): Note {
+export function message(taskId: string, text: string, mode: "push" | "interrupt" | "fold", actor: Actor): Note {
   const store = db();
   const task = need(taskId);
   if (task.status === "cancelled") throw new Error(`#${taskId} was cancelled; start a new task instead`);
@@ -185,6 +247,7 @@ export function message(taskId: string, text: string, mode: "push" | "interrupt"
   store.event(taskId, null, { kind: "steer", noteId: note.id, text: note.text, phase: "queued" });
   ledger(task, `note.${mode}`, actor, { noteId: note.id });
   const running = live.has(taskId);
+  if (mode === "fold") return note;
   if (running && mode === "interrupt") {
     killRun(taskId);
     store.enqueue(taskId, "note", { noteId: note.id, initiator: "person" });
@@ -269,6 +332,10 @@ export function answerCard(cardId: string, option: string | null, text: string |
   if (!opt && !(card.allowText && text?.trim())) throw new Error("pick an option or write an answer");
   if (opt?.irreversible && actor.scope !== "full") throw new Error("this option needs a full-scope device");
   if (actor.scope === "notify" && card.kind !== "question" && card.kind !== "approval") throw new Error("a notify device can only answer questions");
+  if (card.kind === "idea" && opt && ROUTES.includes(opt.id as Route)) {
+    const t = card.taskId ? store.task(card.taskId) : null;
+    if (!t || t.meta.kind !== "idea" || !FINAL.includes(t.status) || t.status === "cancelled") throw new Error("this idea cannot be taken further now");
+  }
   const answered = store.answerCard(cardId, { option: opt?.id ?? null, text: text?.trim() || null, device: actor.device });
   if (!answered) throw new Error("this card was already answered");
   ledger(card.taskId ? store.task(card.taskId) : null, "card.answer", actor, { cardId, kind: card.kind, option: opt?.id ?? null });
@@ -318,6 +385,13 @@ export function answerCard(cardId: string, option: string | null, text: string |
       break;
     case "contradiction":
       if (opt) for (const key of JSON.parse(card.body.split("\n").at(-1) ?? "[]") as string[]) if (key !== opt.id) archiveNote(key);
+      break;
+    case "idea":
+      if (!taskId || !opt) break;
+      if (opt.id === "work") {
+        store.enqueue(taskId, "note", { initiator: "person" });
+        kick();
+      } else if (ROUTES.includes(opt.id as Route)) developIdea(taskId, opt.id as Route, actor);
       break;
     case "result":
       break;

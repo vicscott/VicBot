@@ -6,6 +6,8 @@ import { authenticate, createPairCode, redeemPairCode, revokeDevice } from "../s
 import { HARNESS_DIR, TEMPLATE_DIR } from "../src/config";
 import { describeTool, stepOf, thought } from "../src/progress";
 import { decideFrame, overlap, terms, type Candidate } from "../src/engine/frame";
+import { isIdea } from "../src/engine/intent";
+import { digest } from "../src/digest";
 import { buildBundle } from "../src/context/bundle";
 import { envelope } from "../src/context/envelope";
 import { fitContext } from "../src/context/budget";
@@ -227,4 +229,24 @@ test("framing heuristics: CJK bigrams, follow-up words, and close calls", () => 
   expect(decideFrame({ text: "新问题：哪些青少年队列有脑影像", now }, pool)).toMatchObject({ decision: "new", reason: "asked-new" });
   expect(decideFrame({ text: "ok thanks", now }, pool).reason).toBe("ack");
   expect(decideFrame({ text: "how does Bun compare to Deno", now: now + 2 * 60 * 60_000 }, pool)).toMatchObject({ decision: "new" });
+});
+
+test("ideas are told apart from requests", () => {
+  for (const t of ["I think VicBot should learn from my edits", "what if the sidebar grouped by project?", "maybe we could cache the router", "我觉得可以每周给我一个总结", "有个想法：把报告做成卡片", "如果把任务按项目分组会不会更清楚"]) expect(isIdea(t)).toBe(true);
+  for (const t of ["I think there is a bug, can you fix it?", "what is a monad", "please summarize this paper", "帮我查一下最新的 Bun 版本", "我觉得这个不对，请修复", "explain quickly what a monad is", "I think the build is broken", "我觉得这里报错了"]) expect(isIdea(t)).toBe(false);
+});
+
+test("digest: conclusion, parts and leading sentences", () => {
+  const md = "**Conclusion:** ABCD and Generation R fit best. Both accept outside researchers.\n\n## ABCD\nABCD follows 11,880 children from age 9. Access is through the NDA.\n\n## Generation R\nGeneration R is a Rotterdam birth cohort. You apply with a proposal:\n- write it\n- get approval\n\n## Data\n| cohort | imaging |\n|---|---|\n| ABCD | yes |\n" + "More detail. ".repeat(40);
+  const d = digest(md);
+  expect(d.short).toBe(false);
+  expect(d.conclusion).toBe("ABCD and Generation R fit best. Both accept outside researchers.");
+  expect(d.parts.map((p) => p.title)).toEqual(["ABCD", "Generation R", "Data"]);
+  expect(d.parts[0]!.lead).toBe("ABCD follows 11,880 children from age 9.");
+  expect(d.parts[1]!.lead).toBe("Generation R is a Rotterdam birth cohort.");
+  const plain = digest(`Use ABCD first. It is the easiest to get.\n\nABCD needs an NDA account. It takes six weeks.\n\nGeneration R needs a proposal.\n\n总之，先申请 ABCD。${" x".repeat(300)}`);
+  expect(plain.conclusion).toStartWith("总之，先申请 ABCD。");
+  expect(plain.parts.map((p) => p.lead)).toEqual(["Use ABCD first.", "ABCD needs an NDA account.", "Generation R needs a proposal."]);
+  expect(digest("Short answer.").short).toBe(true);
+  expect(digest("A *verdict* <verdict>{}</verdict>").short).toBe(true);
 });

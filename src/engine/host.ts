@@ -69,6 +69,11 @@ export function report(task: Task): void {
   if (!FINAL.includes(task.status) || task.status === "cancelled") return;
   const line = `#${task.id} ${task.title}`;
   if (task.parentId) return void hostQuiet(`${line}: ${task.status}`, task.id);
+  if (task.status === "done" && task.meta.kind === "idea") {
+    hostSay(`Idea: ${line}\n${short(task.result) || "(no reply)"}`, task.id, "report");
+    openCard({ taskId: task.id, kind: "idea", title: "Take this idea further?", body: "Nothing heavy runs unless you pick one. The idea is kept in memory either way.", options: [{ id: "explore", label: "Explore it" }, { id: "build", label: "Build it" }, { id: "keep", label: "Just keep it" }], allowText: false });
+    return;
+  }
   if (task.status === "done") hostSay(`Done: ${line}\n${short(task.result) || "(no text answer; see the task for files and checks)"}`, task.id, "report");
   else if (task.status === "blocked") hostSay(`Blocked: ${line}\n${task.statusReason ?? ""}`, task.id, "report");
   else hostSay(`Failed: ${line}\n${task.statusReason ?? ""}`, task.id, "report");

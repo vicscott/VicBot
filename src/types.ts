@@ -226,7 +226,7 @@ export interface CardOption {
 export interface Card {
   id: string;
   taskId: string | null;
-  kind: "route" | "question" | "budget" | "blocked" | "contradiction" | "approval" | "result";
+  kind: "route" | "question" | "budget" | "blocked" | "contradiction" | "approval" | "result" | "idea";
   title: string;
   body: string;
   options: CardOption[];

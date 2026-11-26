@@ -4,8 +4,10 @@ import { allowedHosts, authenticate, createPairCode, redeemPairCode, revokeDevic
 import { bus } from "./bus";
 import { BOUNDS, HOST, LIMITS, PORT, ROUTE_THRESHOLD } from "./config";
 import { decideFrame } from "./engine/frame";
+import { isIdea } from "./engine/intent";
 import { selectHarness } from "./engine/policy";
 import { answerCard, assignRoute, cancel, editContract, grantTrust, intake, reframe, withdraw, type Actor } from "./engine/tasks";
+import { team } from "./engine/team";
 import { harnesses, loadHarnesses } from "./harness/registry";
 import { route as decide } from "./router";
 import { db } from "./store";
@@ -174,7 +176,7 @@ async function postEvent(req: Request, actor: Actor): Promise<unknown> {
       const q = quoteOf(b.quote);
       const quoteTask = q ? (db().threadRow(q.rowId)?.taskId ?? null) : null;
       const context = typeof b.context === "string" && b.context ? b.context : null;
-      result = { ...decide(text), frame: decideFrame({ text, quoteTask, context, fresh: b.fresh === true, configured: !!(b.route || b.effort) }) };
+      result = { ...decide(text), idea: !b.route && !b.effort && isIdea(text), frame: decideFrame({ text, quoteTask, context, fresh: b.fresh === true, configured: !!(b.route || b.effort) }) };
       break;
     }
     case "profile":
@@ -236,6 +238,10 @@ export function routes() {
     "/v1/thread": api((req) => db().thread(Number(new URL(req.url).searchParams.get("after") ?? 0) || 0, 300)),
     "/v1/tasks": api(() => db().tasks()),
     "/v1/tasks/:id": api((req) => taskDetail(req.params.id!)),
+    "/v1/tasks/:id/team": api((req) => {
+      if (!db().task(req.params.id!)) throw new HttpError(404, "no such task");
+      return team(req.params.id!);
+    }),
     "/v1/cards": api((req) => db().cards({ open: new URL(req.url).searchParams.get("open") === "1" })),
     "/v1/templates": api(() => db().templates()),
     "/v1/profile": api(() => ({ text: instructionsBody() })),

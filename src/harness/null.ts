@@ -5,7 +5,7 @@ import type { Adapter, HarnessRun, Manifest } from "./types";
 
 /**
  * The degradation harness: zero capabilities, a fixed reply, a verdict tag in its text.
- * Markers in the prompt steer it for tests: `#null:<decision>`, `#null:write=<path>`, `#null:plan`.
+ * Markers in the prompt steer it for tests: `#null:<decision>`, `#null:write=<path>`, `#null:plan`, `#null:long` (a long structured answer).
  */
 export function create(manifest: Manifest): Adapter {
   return {
@@ -66,7 +66,8 @@ export function create(manifest: Manifest): Adapter {
         }
         yield { kind: "session", id: `null-${spec.runId}`, state: "live" };
         const body = Object.keys(verdict).length ? `\n<verdict>${JSON.stringify(verdict)}</verdict>` : "";
-        yield { kind: "text", text: `null harness reply.${body}` };
+        const reply = /#null:long/.test(text) && !isVerify && !isChair ? LONG : "null harness reply.";
+        yield { kind: "text", text: `${reply}${body}` };
         yield { kind: "usage", input: 100, output: 10, cacheRead: 80, cost: 0 };
         yield { kind: "exit", code: 0 };
       }
@@ -74,3 +75,27 @@ export function create(manifest: Manifest): Adapter {
     },
   };
 }
+
+const LONG = [
+  "**Conclusion:** ABCD and Generation R fit best; both have brain imaging, questionnaires and genotyping, and both take outside researchers. Start with ABCD, which has the shortest path to data.",
+  "",
+  "## ABCD Study",
+  "ABCD follows 11,880 US children from age 9–10 with MRI every two years. Access goes through the NIH NBDC: an institutional signing official approves a Data Use Certification, and approval takes about four to six weeks.",
+  "",
+  "## Generation R",
+  "Generation R is a Rotterdam birth cohort with imaging at ages 6, 10 and 13. You apply with a short proposal:",
+  "- a one-page research question",
+  "- a Dutch collaborator",
+  "- approval by the management team",
+  "",
+  "## UK Biobank",
+  "UK Biobank does not fit: it is an adult cohort, so it fails the birth or adolescent requirement. It is still useful for replication.",
+  "",
+  "## Comparison",
+  "| cohort | age | imaging | omics |",
+  "|---|---|---|---|",
+  "| ABCD | 9–19 | MRI | GWAS |",
+  "| Generation R | 0–18 | MRI | GWAS, methylation |",
+  "",
+  "Overall, apply to ABCD now and open a conversation with Generation R in parallel.",
+].join("\n");

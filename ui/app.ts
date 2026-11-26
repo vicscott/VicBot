@@ -1,5 +1,7 @@
 import { stepOf, thought, type Step } from "../src/progress";
-import { markdown } from "./markdown";
+import { digest } from "../src/digest";
+import { inline, markdown } from "./markdown";
+import type { Team } from "../src/engine/team";
 import type { BusMessage, Card, CheckResult, Device, Effort, FrameReason, Note, Quote, Route, Run, Session, StoredEvent, Task, ThreadRow, VEvent } from "../src/types";
 
 interface Detail {
@@ -48,6 +50,7 @@ const els = {
   dTrust: $<HTMLButtonElement>("d-trust"),
   dStop: $<HTMLButtonElement>("d-stop"),
   tabs: $("tabs"),
+  rawToggle: $<HTMLButtonElement>("raw-toggle"),
   pane: $("pane"),
   pair: $<HTMLDialogElement>("pair"),
   pairCode: $<HTMLInputElement>("pair-code"),
@@ -92,7 +95,9 @@ const state = {
   filter: "all" as "active" | "all" | "done",
   selected: null as string | null,
   detail: null as Detail | null,
-  tab: "timeline",
+  tab: "discussion",
+  raw: false,
+  team: null as Team | null,
   route: "" as "" | Route,
   effort: "" as "" | Effort,
   meta: null as Meta | null,
@@ -464,7 +469,7 @@ function threadNode(row: ThreadRow): HTMLElement | null {
     wrap.append(bubble, chip);
     return wrap;
   }
-  const kind = row.kind === "report" ? `report ${/^Done/.test(row.text) ? "done" : /^Blocked/.test(row.text) ? "blocked" : "failed"}` : row.kind;
+  const kind = row.kind === "report" ? `report ${/^Done/.test(row.text) ? "done" : /^Idea/.test(row.text) ? "done idea" : /^Blocked/.test(row.text) ? "blocked" : "failed"}` : row.kind;
   const li = h("li", `host ${kind}`);
   li.dataset.row = String(row.id);
   if (row.kind !== "report") {
@@ -485,19 +490,46 @@ function threadNode(row: ThreadRow): HTMLElement | null {
   const full = row.taskId ? state.tasks.get(row.taskId)?.result : null;
   const fullText = full ? full.replace(/<verdict>[\s\S]*?<\/verdict>/g, "").trim() : "";
   const bar = quoteAction(row, li);
-  if (fullText && fullText.length > summary.replace(/…$/, "").length + 20) {
+  const glance = fullText ? digestNode(fullText) : null;
+  if (glance) body.replaceChildren(glance);
+  if (fullText && (glance || fullText.length > summary.replace(/…$/, "").length + 20)) {
     const toggle = h("button", "small ghost r-more", "Show full answer");
     let open = false;
     toggle.onclick = () => {
       open = !open;
-      body.replaceChildren(markdown(open ? fullText : summary, onTask));
-      toggle.textContent = open ? "Show less" : "Show full answer";
+      body.replaceChildren(open ? markdown(fullText, onTask) : (glance ?? markdown(summary, onTask)));
+      toggle.textContent = open ? (glance ? "Show summary" : "Show less") : "Show full answer";
       if (!open) li.scrollIntoView({ block: "nearest" });
     };
     bar.prepend(toggle);
   }
   li.append(bar);
   return li;
+}
+
+/** A long answer at a glance: the conclusion, how many parts, and each part's leading sentence. Null for short answers. */
+function digestNode(full: string): HTMLElement | null {
+  const d = digest(full);
+  if (d.short || (!d.conclusion && d.parts.length < 2)) return null;
+  const box = h("div", "digest");
+  if (d.conclusion) {
+    const c = h("div", "dg-conc");
+    c.append(h("span", "dg-label", "Conclusion"), inline(d.conclusion, onTask));
+    box.append(c);
+  }
+  if (d.parts.length) {
+    box.append(h("div", "dg-count", `${d.parts.length} part${d.parts.length > 1 ? "s" : ""} in the full answer`));
+    const ol = h("ol", "dg-parts");
+    for (const p of d.parts.slice(0, 6)) {
+      const li = h("li");
+      if (p.title) li.append(h("b", "", p.title), document.createTextNode(p.lead ? " — " : ""));
+      if (p.lead) li.append(inline(p.lead, onTask));
+      ol.append(li);
+    }
+    if (d.parts.length > 6) ol.append(h("li", "dg-more", `+${d.parts.length - 6} more in the full answer`));
+    box.append(ol);
+  }
+  return box;
 }
 
 /** Where the progress card goes: after the newest message that started a turn. */
@@ -807,6 +839,7 @@ interface Preview {
   designated: string | null;
   confidence: number;
   frame: { decision: string; taskId: string; reason: string } | null;
+  idea: boolean;
 }
 
 let previewTimer: Timer | undefined;
@@ -819,10 +852,12 @@ function preview(): void {
       const d = await api<Preview>("/v1/events", { type: "preview", text, context: state.view ?? undefined, fresh: state.fresh || undefined, route: (state.fresh && state.route) || undefined, effort: (state.fresh && state.effort) || undefined, quote: state.quote ? { rowId: state.quote.rowId } : undefined });
       const f = d.frame;
       if (f && f.decision !== "new") {
-        if (f.taskId === state.view) return void (els.guess.textContent = f.decision === "ack" ? "→ noted, no new run" : "");
         const t = state.tasks.get(f.taskId);
-        return void (els.guess.textContent = `→ continues #${f.taskId}${t ? ` ${t.title.slice(0, 40)}` : ""}`);
+        const kept = d.idea && f.decision === "continue" && t && FINAL.includes(t.status) ? " · an idea: kept for its next turn, nothing runs now" : "";
+        if (f.taskId === state.view) return void (els.guess.textContent = f.decision === "ack" ? "→ noted, no new run" : kept ? `→${kept.slice(2)}` : "");
+        return void (els.guess.textContent = `→ continues #${f.taskId}${t ? ` ${t.title.slice(0, 40)}` : ""}${kept}`);
       }
+      if (d.idea) return void (els.guess.textContent = `${state.fresh ? "→ " : "→ new conversation · "}an idea: a quick reaction, nothing heavy runs`);
       const picked = state.fresh ? state.route : "";
       const route = picked || d.route;
       const effort = (state.fresh && state.effort) || d.effort;
@@ -873,7 +908,7 @@ async function select(id: string | null): Promise<void> {
     return;
   }
   try {
-    state.detail = await api<Detail>(`/v1/tasks/${id}`);
+    [state.detail, state.team] = await Promise.all([api<Detail>(`/v1/tasks/${id}`), api<Team>(`/v1/tasks/${id}/team`)]);
   } catch (err) {
     return toast((err as Error).message);
   }
@@ -907,13 +942,126 @@ function renderDetail(): void {
   if (lost?.event.kind === "session" && lost.event.state === "lost") banners.push(h("div", "banner lost", `Session restarted: ${lost.event.note ?? "the previous session was lost"}. The task continued from its recovery block, so earlier tool output is not in context.`));
   if (t.status === "blocked" || t.status === "failed") banners.push(h("div", `banner ${t.status}`, `${t.status}: ${t.statusReason ?? ""}`));
   else if (t.statusReason && !FINAL.includes(t.status)) banners.push(h("div", "banner", t.statusReason));
-  if (t.result && (t.status === "done" || t.status === "waiting_input")) banners.push(h("div", "banner result", t.result));
   els.dBanners.replaceChildren(...banners);
   els.dStop.hidden = FINAL.includes(t.status);
   els.dTrust.hidden = t.trust === "full" || FINAL.includes(t.status) && t.status !== "done";
   renderDetailCards();
-  for (const b of els.tabs.querySelectorAll("button")) b.classList.toggle("on", b.dataset.tab === state.tab);
+  renderTabs();
   renderPane();
+}
+
+function renderTabs(): void {
+  for (const b of els.tabs.querySelectorAll<HTMLButtonElement>("button[data-tab]")) {
+    b.classList.toggle("on", b.dataset.tab === state.tab);
+    if (b.classList.contains("raw")) b.hidden = !state.raw;
+  }
+  els.rawToggle.classList.toggle("on", state.raw);
+  els.rawToggle.textContent = state.raw ? "Hide raw log" : "Raw log";
+}
+
+const TEAM_TABS = ["discussion", "board"];
+
+let teamTimer: Timer | undefined;
+/** The discussion and board cover the whole conversation, so any task in it can change them. */
+function refreshTeam(): void {
+  clearTimeout(teamTimer);
+  teamTimer = setTimeout(async () => {
+    const id = state.selected;
+    if (!id) return;
+    try {
+      const fresh = await api<Team>(`/v1/tasks/${id}/team`);
+      if (state.selected !== id) return;
+      state.team = fresh;
+      if (TEAM_TABS.includes(state.tab)) renderPane();
+    } catch {}
+  }, 400);
+}
+
+function sayNode(say: Team["discussion"][number], here: string): HTMLElement {
+  const li = h("li", `say ${say.tone} ${say.from === "You" ? "me" : ""} ${say.from.startsWith("VicBot") ? "host" : ""}`);
+  const head = h("div", "say-head");
+  head.append(h("span", "say-from", say.from), h("span", "say-to", `→ ${say.to}`), h("span", "ts", clock(say.ts)));
+  if (say.taskId !== here) {
+    const a = h("a", "say-task", `#${say.taskId}`);
+    a.onclick = () => select(say.taskId);
+    head.append(a);
+  }
+  const body = h("div", "say-text");
+  body.append(inline(say.text, onTask));
+  li.append(head, body);
+  return li;
+}
+
+function section(title: string, ...children: (HTMLElement | null)[]): HTMLElement {
+  const box = h("section", "bd-sec");
+  box.append(h("h4", "", title), ...children.filter((c): c is HTMLElement => !!c));
+  return box;
+}
+
+function list(items: (string | HTMLElement)[], cls = ""): HTMLElement {
+  const ul = h("ul", `bd-list ${cls}`);
+  for (const it of items) {
+    if (typeof it === "string") {
+      const li = h("li");
+      li.append(inline(it, onTask));
+      ul.append(li);
+    } else ul.append(it);
+  }
+  return ul;
+}
+
+function renderBoard(tm: Team): HTMLElement[] {
+  const b = tm.board;
+  const root = state.tasks.get(tm.rootId);
+  const out: HTMLElement[] = [];
+  const goal = h("div", "bd-goal");
+  goal.append(inline(b.goal.length > 500 ? `${b.goal.slice(0, 499)}…` : b.goal, onTask));
+  const line = h("div", "bd-line");
+  line.append(h("span", `dot ${b.status}`), h("span", "", [b.status.replace(/_/g, " "), b.route && `${b.route} · ${b.effort}`, b.owner && `on ${b.owner}`].filter(Boolean).join(" · ")));
+  out.push(section("Goal", goal, line));
+  const result = root?.result?.replace(/<verdict>[\s\S]*?<\/verdict>/g, "").trim();
+  if (result && b.status === "done") {
+    const body = h("div", "bd-answer");
+    const glance = digestNode(result);
+    body.append(glance ?? markdown(result, onTask));
+    const more = glance ? h("button", "small ghost r-more", "Show full answer") : null;
+    if (more) {
+      let open = false;
+      more.onclick = () => {
+        open = !open;
+        body.replaceChildren(open ? markdown(result, onTask) : glance!);
+        more.textContent = open ? "Show summary" : "Show full answer";
+      };
+    }
+    out.push(section("Answer", body, more));
+  }
+  if (b.bots.length) {
+    const chips = h("div", "bd-bots");
+    for (const x of b.bots) chips.append(h("span", "chip", x));
+    out.push(section("Bots on this", chips));
+  }
+  if (b.parts.length) {
+    const rows = b.parts.map((p) => {
+      const li = h("li", "bd-part");
+      li.append(h("span", `dot ${p.status}`), h("b", "", p.key), h("span", "bd-pt", p.title), h("span", "bd-ph", [p.route, p.harness, p.status.replace(/_/g, " ")].filter(Boolean).join(" · ")));
+      if (p.lead) {
+        const lead = h("div", "bd-lead");
+        lead.append(inline(p.lead, onTask));
+        li.append(lead);
+      }
+      li.onclick = () => select(p.id);
+      return li;
+    });
+    out.push(section(`Parts (${b.parts.length})`, list(rows)));
+  }
+  if (b.findings.length) out.push(section("Shared findings", list(b.findings.map((f) => `**${f.from}:** ${f.text}`))));
+  if (b.open.length) out.push(section("Open questions", list(b.open)));
+  out.push(section("Done when", b.doneWhen.length ? list(b.doneWhen) : h("p", "hint", "No checks: the worker's own pass is enough.")));
+  if (b.checks.length) out.push(section("Checks", list(b.checks.map((c) => `${c.ok ? "✓" : "✗"} **${c.id}**${c.attempt > 1 ? ` (try ${c.attempt})` : ""}: ${c.detail}`), "checks")));
+  if (b.files.length) out.push(section("Files", list(b.files.map((f) => `\`${f}\``))));
+  const u = b.budget;
+  out.push(section("Budget", h("p", "hint", `${u.used.toolCalls}/${u.limit.toolCalls} tool calls · ${u.used.minutes.toFixed(1)}/${u.limit.minutes} min · $${u.used.cost.toFixed(2)}/$${u.limit.cost.toFixed(2)}`)));
+  return out;
 }
 
 function renderDetailCards(): void {
@@ -991,6 +1139,22 @@ function renderPane(): void {
   if (!d) return;
   const t = d.task;
   switch (state.tab) {
+    case "discussion": {
+      const tm = state.team;
+      if (!tm) return void els.pane.replaceChildren(h("p", "hint", "Loading…"));
+      const ol = h("ol", "disc");
+      for (const say of tm.discussion) ol.append(sayNode(say, t.id));
+      els.pane.replaceChildren(tm.discussion.length ? ol : h("p", "hint", "Nobody has said anything yet."), h("p", "hint", "What the bots told each other: routing, plans, results, reviews and your notes. Tool calls are in the progress card and the raw log."));
+      els.pane.scrollTop = els.pane.scrollHeight;
+      return;
+    }
+    case "board": {
+      const tm = state.team;
+      if (!tm) return void els.pane.replaceChildren(h("p", "hint", "Loading…"));
+      els.pane.replaceChildren(...renderBoard(tm));
+      els.pane.scrollTop = 0;
+      return;
+    }
     case "timeline": {
       toolRows.clear();
       const ol = h("ol");
@@ -1106,6 +1270,7 @@ function onMessage(m: BusMessage): void {
       return;
     case "event":
       track(m.taskId, m.event);
+      if (state.detail && rootId(m.taskId) === rootId(state.detail.task.id) && ["run", "check", "route", "handoff", "steer", "verdict", "limit"].includes(m.event.event.kind)) refreshTeam();
       renderActivitySoon(rootId(m.taskId));
       if (m.event.event.kind === "tool" && m.event.event.phase === "start") renderListSoon();
       if (state.detail?.task.id !== m.taskId) return;
@@ -1126,6 +1291,7 @@ function onMessage(m: BusMessage): void {
       return;
     case "card":
       upsertCard(m.card);
+      if (state.detail && m.card.taskId && rootId(m.card.taskId) === rootId(state.detail.task.id)) refreshTeam();
       return;
     case "note":
       if (state.detail?.task.id === m.note.taskId) {
@@ -1286,7 +1452,13 @@ els.tabs.onclick = (e) => {
   const b = (e.target as HTMLElement).closest("button");
   if (!b?.dataset.tab) return;
   state.tab = b.dataset.tab;
-  for (const x of els.tabs.querySelectorAll("button")) x.classList.toggle("on", x === b);
+  renderTabs();
+  renderPane();
+};
+els.rawToggle.onclick = () => {
+  state.raw = !state.raw;
+  if (!state.raw && !TEAM_TABS.includes(state.tab)) state.tab = "discussion";
+  renderTabs();
   renderPane();
 };
 els.dClose.onclick = () => select(null);
