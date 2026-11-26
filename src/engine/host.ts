@@ -1,5 +1,5 @@
 import { db, newId } from "../store";
-import { FINAL, type Card, type Task, type ThreadRow } from "../types";
+import { FINAL, type Card, type Frame, type Quote, type Task, type ThreadRow } from "../types";
 import { stepOf } from "../progress";
 import { told } from "../wake/memory";
 import { stripVerdict } from "./verdict";
@@ -12,8 +12,31 @@ function write(row: Omit<ThreadRow, "id" | "ts">): ThreadRow {
   return db().addThread(row);
 }
 
-export function personSaid(text: string, taskId: string | null): ThreadRow {
-  return write({ author: "person", kind: "say", text, taskId, cardId: null, pointer: taskId ? `task:${taskId}` : null, delivery: "sent" });
+export function personSaid(text: string, taskId: string | null, quote: Quote | null = null, frame: Frame | null = null): ThreadRow {
+  return write({ author: "person", kind: "say", text, taskId, cardId: null, pointer: taskId ? `task:${taskId}` : null, delivery: "sent", quote, frame });
+}
+
+/** The text a worker sees for a message that quotes another one. */
+export function withQuote(text: string, quote: Quote | null): string {
+  if (!quote) return text;
+  const who = quote.author === "person" ? "the person's earlier message" : "VicBot's earlier reply";
+  return `> Quoting ${who}${quote.taskId ? ` in #${quote.taskId}` : ""}:\n${quote.text.split("\n").map((l) => `> ${l}`).join("\n")}\n\n${text}`;
+}
+
+export function started(task: Task, harness: string): ThreadRow | null {
+  if (!task.route) return null;
+  return hostSay(`Started #${task.id}: ${task.route} · ${task.effort}${task.shape !== "single" ? ` · ${task.shape}` : ""} → ${harness}. I'll report when it's done.`, task.id, "status");
+}
+
+/** One task's state, for a status question asked inside its conversation. */
+export function taskStatus(task: Task): string {
+  const kids = db().children(task.id);
+  const last = lastStep(task.id);
+  const lines = [`#${task.id} is ${task.status.replace(/_/g, " ")}${task.harness ? ` on ${task.harness}` : ""}${task.statusReason ? ` (${task.statusReason})` : ""}.`];
+  if (last) lines.push(`Last step: ${last}`);
+  lines.push(`Used ${task.used.toolCalls}/${task.budget.toolCalls} tool calls, ${task.used.minutes.toFixed(1)}/${task.budget.minutes} min.`);
+  if (kids.length) lines.push(`Parts: ${kids.map((k) => `#${k.id} ${k.status.replace(/_/g, " ")}`).join(", ")}`);
+  return lines.join("\n");
 }
 
 export function hostSay(text: string, taskId: string | null = null, kind: ThreadRow["kind"] = "say"): ThreadRow {

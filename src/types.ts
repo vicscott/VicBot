@@ -247,6 +247,30 @@ export interface ThreadRow {
   cardId: string | null;
   pointer: string | null;
   delivery: "sent" | "suppressed";
+  /** A person's message can quote an earlier message, from VicBot or from themselves. */
+  quote?: Quote | null;
+  /** How the host framed a person's message: which conversation it went to, and why. */
+  frame?: Frame | null;
+}
+
+export interface Quote {
+  rowId: number;
+  author: "person" | "host";
+  taskId: string | null;
+  text: string;
+}
+
+export type FrameReason = "explicit" | "context" | "quote" | "mention" | "followup" | "similar" | "ack" | "new" | "asked-new" | "stopped" | "split" | "merged";
+
+export interface Frame {
+  decision: "continue" | "new" | "ack";
+  /** The conversation (root task) the message belongs to. */
+  taskId: string;
+  reason: FrameReason;
+  confidence: number;
+  /** Another conversation that was a close call, offered as a one-click alternative. */
+  alt: string | null;
+  noteId: string | null;
 }
 
 export interface Note {

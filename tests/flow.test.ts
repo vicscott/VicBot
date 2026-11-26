@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
-import { cancel, answerCard, intake, message, withdraw } from "../src/engine/tasks";
+import { cancel, answerCard, intake, message, reframe, withdraw } from "../src/engine/tasks";
 import { live } from "../src/engine/live";
 import { loadHarnesses } from "../src/harness/registry";
 import { db, Store, useStore } from "../src/store";
@@ -192,4 +192,87 @@ test("the inbox dedupes by key", () => {
   const t = say("hello there");
   expect(db().enqueue(t.id, "timer", {}, "k1")).not.toBeNull();
   expect(db().enqueue(t.id, "timer", {}, "k1")).toBeNull();
+});
+
+test("framing: a follow-up continues the last conversation, a new topic starts one, the same topic finds its way back", async () => {
+  const a = say("explain quickly what a monad is");
+  await idle();
+  const follow = intake("and what about functors?", {}, me);
+  expect(follow.task).toBeUndefined();
+  expect(follow.note!.taskId).toBe(a.id);
+  expect(follow.row!.taskId).toBe(a.id);
+  expect(follow.row!.frame).toMatchObject({ decision: "continue", taskId: a.id, reason: "followup" });
+  await idle();
+  const b = intake("write a haiku about autumn leaves", {}, me);
+  expect(b.task).toBeDefined();
+  expect(b.row!.taskId).toBe(b.task!.id);
+  expect(b.row!.frame!.decision).toBe("new");
+  await idle();
+  const back = intake("explain the monad idea once more with an example", {}, me);
+  expect(back.row!.frame).toMatchObject({ decision: "continue", taskId: a.id, reason: "similar" });
+  await idle();
+  const runs = db().runs(a.id).length;
+  const thanks = intake("thanks!", {}, me);
+  expect(thanks.row!.frame!.decision).toBe("ack");
+  expect(thanks.note).toBeUndefined();
+  await idle();
+  expect(db().runs(a.id).length).toBe(runs);
+});
+
+test("quotes: quoting a reply continues its conversation and the worker sees the quoted text", async () => {
+  const a = say("explain quickly what a monad is");
+  await idle();
+  const b = say("write a haiku about autumn leaves");
+  await idle();
+  expect(b.id).not.toBe(a.id);
+  const report = db().thread().find((r) => r.kind === "report" && r.taskId === a.id)!;
+  const body = report.text.slice(report.text.indexOf("\n") + 1);
+  const part = body.slice(0, Math.min(24, body.length));
+  const r = intake("say more about this part", { quote: { rowId: report.id, text: part } }, me);
+  expect(r.row!.frame).toMatchObject({ decision: "continue", taskId: a.id, reason: "quote" });
+  expect(r.row!.quote).toMatchObject({ rowId: report.id, author: "host", taskId: a.id, text: part.trim() });
+  expect(db().note(r.note!.id)!.text).toContain(`> Quoting VicBot's earlier reply in #${a.id}:`);
+  expect(() => intake("x", { quote: { rowId: report.id, text: "zzz this text is nowhere zzz" } }, me)).toThrow("not in that message");
+  const mine = db().thread().find((x) => x.author === "person" && x.taskId === b.id)!;
+  const own = intake("new task: turn this into a limerick", { quote: { rowId: mine.id } }, me);
+  expect(own.task).toBeDefined();
+  expect(own.task!.goal).toContain("> Quoting the person's earlier message");
+  expect(own.task!.title).toBe("new task: turn this into a limerick");
+  const split = intake("new task: 这一点能展开说说吗？", { quote: { rowId: report.id } }, me);
+  expect(split.task!.route).toBe("explore");
+  expect(split.task!.status).not.toBe("needs_route");
+  await idle();
+});
+
+test("reframe: split a message into its own task, then merge it back", async () => {
+  const a = say("explain quickly what a monad is");
+  await idle();
+  const r = intake("also, tell me about rust lifetimes", {}, me);
+  expect(r.row!.taskId).toBe(a.id);
+  const split = reframe(r.row!.id, "new", me);
+  expect(split.task).toBeDefined();
+  expect(db().threadRow(r.row!.id)!.taskId).toBe(split.task!.id);
+  expect(db().threadRow(r.row!.id)!.frame!.reason).toBe("split");
+  expect(["withdrawn", "read"]).toContain(db().note(r.note!.id)!.status);
+  await idle();
+  const merged = reframe(r.row!.id, a.id, me);
+  expect(merged.note!.taskId).toBe(a.id);
+  expect(get(split.task!.id).meta.mergedInto).toBe(a.id);
+  expect(() => reframe(r.row!.id, a.id, me)).toThrow("already there");
+  await idle();
+});
+
+test("inside a conversation: messages stay there, status is about it, and an explicit new task splits off", async () => {
+  const a = say("explain quickly what a monad is");
+  await idle();
+  const here = intake("write a haiku about it", { context: a.id }, me);
+  expect(here.row!.frame).toMatchObject({ decision: "continue", taskId: a.id, reason: "context" });
+  await idle();
+  intake("status", { context: a.id }, me);
+  expect(db().thread().at(-1)!.text).toStartWith(`#${a.id} is`);
+  expect(db().thread().at(-1)!.taskId).toBe(a.id);
+  const other = intake("new task: list three prime numbers", { context: a.id }, me);
+  expect(other.task).toBeDefined();
+  expect(other.row!.frame!.reason).toBe("asked-new");
+  await idle();
 });

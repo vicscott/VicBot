@@ -258,3 +258,43 @@ dialog textarea { width: 100%; margin: 4px 0; background: var(--bg); border: 1px
 #thread .host.report { white-space: normal; }
 .r-head { margin-bottom: 4px; }
 .r-more { margin-top: 2px; color: var(--accent); padding-left: 0; }
+
+/* Conversations in the sidebar */
+#task-list li.new-conv { grid-template-columns: 8px 1fr auto; margin-bottom: 6px; color: var(--dim); }
+#task-list li.new-conv .plus { font-size: 13px; color: var(--accent); }
+#task-list li.new-conv.sel { color: var(--text); }
+#task-list .unread { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: #0b0d12; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+#task-list li.flash { animation: flash 1.6s ease-out; }
+#task-list .empty { padding: 8px 10px; }
+@keyframes flash { 0%, 30% { background: color-mix(in srgb, var(--accent) 28%, transparent); } 100% { background: var(--panel-2); } }
+.host-head #head-details { margin-left: auto; }
+.host-head #head-details[hidden] + #profile-btn { margin-left: auto; }
+.host-head #head-details:not([hidden]) + #profile-btn { margin-left: 0; }
+.host-head h1 { max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Messages, quotes and framing */
+#thread li.person-wrap { align-self: flex-end; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; max-width: 760px; }
+#thread .person-wrap > .person { align-self: flex-end; }
+#thread .person { position: relative; }
+#thread .host { position: relative; }
+.p-text { white-space: pre-wrap; }
+.h-text { display: inline; }
+.h-text .md, .h-text .md p { display: inline; }
+.m-actions { position: absolute; top: -12px; right: 6px; display: none; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 1px 2px; }
+#thread .host.report .m-actions { position: static; display: flex; border: 0; background: transparent; padding: 0; margin-top: 2px; }
+#thread li:hover > .m-actions, #thread .person-wrap:hover .m-actions { display: flex; }
+.m-actions button { font-size: 11.5px; padding: 1px 7px; }
+blockquote.q { margin: 0 0 6px; padding: 3px 8px; border-left: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 0 6px 6px 0; font-size: 12.5px; color: var(--dim); cursor: pointer; display: flex; flex-direction: column; max-width: 560px; }
+.q-who { font-size: 11px; color: var(--faint); }
+.q-text { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
+.frame { font-size: 11.5px; color: var(--faint); display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.frame button { font-size: 11.5px; padding: 0 6px; color: var(--accent); }
+#thread li.hl, #thread li.hl > .person { box-shadow: 0 0 0 2px var(--accent); border-radius: 10px; transition: box-shadow .3s; }
+#thread li.activity.none { display: none; }
+.quote-chip { display: flex; align-items: flex-start; gap: 8px; margin: 2px 0 6px; padding: 5px 8px; border-left: 2px solid var(--accent); background: var(--panel-2); border-radius: 0 8px 8px 0; }
+.qc-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.qc-who { font-size: 11px; color: var(--faint); }
+.qc-text { font-size: 12.5px; color: var(--dim); white-space: pre-wrap; max-height: 4.5em; overflow: hidden; }
+.r-state { font-weight: 600; color: var(--dim); font-size: 12.5px; }
+#composer .target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+#composer .target-row { display: flex; align-items: center; gap: 8px; }
