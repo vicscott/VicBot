@@ -1,3 +1,4 @@
+import { stepOf, thought, type Step } from "../src/progress";
 import type { BusMessage, Card, CheckResult, Device, Effort, Note, Route, Run, Session, StoredEvent, Task, ThreadRow, VEvent } from "../src/types";
 
 interface Detail {
@@ -14,7 +15,7 @@ interface Detail {
 
 interface Meta {
   you: { device: string; scope: string };
-  harnesses: { id: string; available: boolean; version: string | null; problem: string | null }[];
+  harnesses: { id: string; available: boolean; version: string | null; problem: string | null; capabilities: { web: boolean } }[];
   mapping: Record<string, string | null>;
 }
 
@@ -58,6 +59,11 @@ const els = {
   codeScope: $<HTMLSelectElement>("code-scope"),
   newCode: $<HTMLButtonElement>("new-code"),
   codeOut: $("code-out"),
+  profileBtn: $<HTMLButtonElement>("profile-btn"),
+  profile: $<HTMLDialogElement>("profile"),
+  profileText: $<HTMLTextAreaElement>("profile-text"),
+  profileSave: $<HTMLButtonElement>("profile-save"),
+  profileMsg: $("profile-msg"),
 };
 
 const FINAL = ["done", "blocked", "failed", "cancelled"];
@@ -161,6 +167,8 @@ function renderList(): void {
     if (t.harness) sub.append(h("span", "", t.harness));
     if (t.shape !== "single") sub.append(h("span", "", t.shape));
     li.append(h("span", `dot ${t.status}`), h("span", "t", t.title), h("span", "when", ago(t.updatedAt)), sub);
+    const last = !FINAL.includes(t.status) ? activity.get(t.id)?.steps.at(-1) : undefined;
+    if (last) li.append(h("span", "now", last.text));
     items.push(li);
     for (const c of all.filter((x) => x.parentId === t.id).sort((a, b) => a.createdAt - b.createdAt)) if (depth < 3) add(c, depth + 1);
   };
@@ -180,6 +188,7 @@ function renderHarnesses(): void {
     }),
   );
   els.devicesBtn.hidden = state.meta.you.scope !== "full";
+  els.profileBtn.hidden = state.meta.you.scope !== "full";
 }
 
 // ── thread ───────────────────────────────────────────────────────────────
@@ -259,6 +268,7 @@ function addThread(row: ThreadRow): void {
   if (!node) return;
   const stick = els.thread.scrollHeight - els.thread.scrollTop - els.thread.clientHeight < 80;
   els.thread.append(node);
+  anchorActivity(row, node);
   if (stick) els.thread.scrollTop = els.thread.scrollHeight;
 }
 
@@ -271,6 +281,141 @@ function upsertCard(card: Card): void {
     else state.detail.cards.unshift(card);
     renderDetailCards();
   }
+}
+
+// ── live progress ────────────────────────────────────────────────────────
+
+interface Activity {
+  taskId: string;
+  el: HTMLElement;
+  steps: (Step & { child: boolean })[];
+  thinking: string;
+  lastAt: number;
+  loaded: boolean;
+}
+
+const activity = new Map<string, Activity>();
+const SHOWN_STEPS = 4;
+
+const rootId = (taskId: string) => state.tasks.get(taskId)?.rootId ?? taskId;
+
+function dur(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+function webOn(t: Task): boolean {
+  return !!t.web && !!state.meta?.harnesses.find((x) => x.id === t.harness)?.capabilities?.web;
+}
+
+const PHASE: Partial<Record<Task["status"], string>> = {
+  queued: "Queued",
+  working: "Working",
+  verifying: "Checking the result",
+  waiting_input: "Waiting for you",
+  waiting_approval: "Waiting for your approval",
+  waiting_child: "Waiting on its parts",
+  waiting_timer: "Scheduled",
+  needs_route: "Waiting for a route",
+};
+
+/** Adds one event to the task's progress. Child tasks report into their root's card. */
+function track(taskId: string, se: StoredEvent): void {
+  const a = activity.get(rootId(taskId));
+  if (!a) return;
+  a.lastAt = se.ts;
+  if (se.event.kind === "thinking") {
+    a.thinking = thought(se.event.text);
+    return;
+  }
+  const step = stepOf(se.event, se.runId);
+  if (!step) return;
+  if (se.event.kind === "tool" || se.event.kind === "run") a.thinking = "";
+  const child = taskId !== a.taskId;
+  const i = step.key ? a.steps.findIndex((x) => x.key === step.key) : -1;
+  if (i >= 0) a.steps[i] = { ...a.steps[i]!, tone: step.tone };
+  else a.steps.push({ ...step, child });
+  if (a.steps.length > 200) a.steps.splice(0, a.steps.length - 200);
+}
+
+function renderActivity(a: Activity): void {
+  const t = state.tasks.get(a.taskId);
+  if (!t) return;
+  const final = FINAL.includes(t.status);
+  a.el.className = `activity ${final ? `ended ${t.status}` : "live"}`;
+  const head = h("div", "a-head");
+  head.append(h("span", `dot ${t.status}`));
+  const who = [t.harness, t.route && `${t.route} · ${t.effort}`, webOn(t) && "web search on"].filter(Boolean).join(" · ");
+  if (final) {
+    const verb = t.status === "done" ? "Finished" : t.status === "cancelled" ? "Stopped" : t.status === "blocked" ? "Blocked" : "Failed";
+    head.append(h("span", "a-phase", `${verb} in ${dur(t.used.minutes * 60_000 || t.updatedAt - t.createdAt)}`), h("span", "a-who", `${who} · ${t.used.toolCalls} tool calls`));
+  } else {
+    head.append(h("span", "a-phase", PHASE[t.status] ?? t.status.replace(/_/g, " ")), h("span", "a-who", who), h("span", "a-clock", dur(Date.now() - t.createdAt)));
+  }
+  head.onclick = () => select(t.id);
+  const nodes: HTMLElement[] = [head];
+  if (!final) {
+    const list = h("ol", "a-steps");
+    const hidden = a.steps.length - SHOWN_STEPS;
+    if (hidden > 0) {
+      const more = h("li", "a-more", `+${hidden} earlier step${hidden > 1 ? "s" : ""}`);
+      more.onclick = () => select(t.id);
+      list.append(more);
+    }
+    for (const s of a.steps.slice(-SHOWN_STEPS)) {
+      const li = h("li", `a-step ${s.tone}`);
+      li.append(h("span", "a-ic"), document.createTextNode(`${s.child ? "↳ " : ""}${s.text}`));
+      list.append(li);
+    }
+    const quiet = Date.now() - a.lastAt;
+    if (t.status === "working" || t.status === "verifying") {
+      const now = h("li", "a-now");
+      now.textContent = a.thinking ? a.thinking : quiet > 45_000 ? `Quiet for ${dur(quiet)}; the run is still alive` : a.steps.length ? "Thinking…" : "Starting up…";
+      list.append(now);
+    }
+    if (list.childElementCount) nodes.push(list);
+    const row = h("div", "a-actions");
+    const open = h("button", "small ghost", "Details");
+    open.onclick = () => select(t.id);
+    const msg = h("button", "small ghost", "Message");
+    msg.onclick = () => setTarget(t.id);
+    const stop = h("button", "small ghost danger", "Stop");
+    stop.onclick = () => stopTask(t);
+    row.append(open, msg, stop);
+    nodes.push(row);
+  }
+  a.el.replaceChildren(...nodes);
+}
+
+function renderActivities(): void {
+  for (const a of activity.values()) renderActivity(a);
+}
+
+/** The progress card sits under the first host line about a root task. */
+function anchorActivity(row: ThreadRow, node: HTMLElement): void {
+  if (row.author !== "host" || !row.taskId || activity.has(row.taskId)) return;
+  const t = state.tasks.get(row.taskId);
+  if (!t || t.parentId) return;
+  const el = h("li", "activity");
+  node.after(el);
+  const a: Activity = { taskId: t.id, el, steps: [], thinking: "", lastAt: t.updatedAt, loaded: false };
+  activity.set(t.id, a);
+  renderActivity(a);
+  if (!FINAL.includes(t.status)) void loadActivity(a);
+}
+
+async function loadActivity(a: Activity): Promise<void> {
+  try {
+    const d = await api<Detail>(`/v1/tasks/${a.taskId}`);
+    const live = a.steps;
+    a.steps = [];
+    for (const e of d.events) track(a.taskId, e);
+    for (const s of live) if (!a.steps.some((x) => x.key && x.key === s.key)) a.steps.push(s);
+    a.loaded = true;
+    renderActivity(a);
+  } catch {}
 }
 
 // ── composer ─────────────────────────────────────────────────────────────
@@ -558,6 +703,7 @@ function onMessage(m: BusMessage): void {
     case "task":
       state.tasks.set(m.task.id, m.task);
       renderListSoon();
+      renderActivitySoon(m.task.rootId);
       if (state.detail?.task.id === m.task.id) {
         state.detail.task = m.task;
         renderDetail();
@@ -566,6 +712,9 @@ function onMessage(m: BusMessage): void {
       if (state.target === m.task.id) setTarget(m.task.id);
       return;
     case "event":
+      track(m.taskId, m.event);
+      renderActivitySoon(rootId(m.taskId));
+      if (m.event.event.kind === "tool" && m.event.event.phase === "start") renderListSoon();
       if (state.detail?.task.id !== m.taskId) return;
       state.detail.events.push(m.event);
       if (m.event.event.kind === "run" || m.event.event.kind === "check") void refreshDetail();
@@ -594,6 +743,24 @@ function onMessage(m: BusMessage): void {
       }
       return;
   }
+}
+
+const dirty = new Set<string>();
+let activityTimer: Timer | undefined;
+function renderActivitySoon(id: string): void {
+  if (!activity.has(id)) return;
+  dirty.add(id);
+  if (activityTimer) return;
+  activityTimer = setTimeout(() => {
+    activityTimer = undefined;
+    const stick = els.thread.scrollHeight - els.thread.scrollTop - els.thread.clientHeight < 80;
+    for (const x of dirty) {
+      const a = activity.get(x);
+      if (a) renderActivity(a);
+    }
+    dirty.clear();
+    if (stick) els.thread.scrollTop = els.thread.scrollHeight;
+  }, 120);
 }
 
 let refreshing: Timer | undefined;
@@ -677,6 +844,24 @@ els.newCode.onclick = async () => {
   els.codeOut.textContent = `${r.code} (until ${clock(r.expiresAt)})`;
 };
 
+els.profileBtn.onclick = async () => {
+  els.profileMsg.textContent = "";
+  els.profile.showModal();
+  try {
+    els.profileText.value = (await api<{ text: string }>("/v1/profile")).text;
+  } catch (err) {
+    els.profileMsg.textContent = (err as Error).message;
+  }
+};
+els.profileSave.onclick = async () => {
+  try {
+    await send({ type: "profile", text: els.profileText.value });
+    els.profileMsg.textContent = "Saved. New runs get it.";
+  } catch (err) {
+    els.profileMsg.textContent = (err as Error).message;
+  }
+};
+
 // ── wiring ───────────────────────────────────────────────────────────────
 
 els.form.onsubmit = (e) => {
@@ -710,21 +895,22 @@ els.tabs.onclick = (e) => {
 };
 els.dClose.onclick = () => select(null);
 els.dMessage.onclick = () => state.detail && setTarget(state.detail.task.id);
-els.dStop.onclick = async () => {
-  const t = state.detail?.task;
-  if (!t || !confirm(`Stop #${t.id}? Its current run is killed and the task is cancelled.`)) return;
+async function stopTask(t: Task): Promise<void> {
+  if (!confirm(`Stop #${t.id}? Its current run is killed and the task is cancelled.`)) return;
   try {
     await send({ type: "cancel", taskId: t.id });
   } catch (err) {
     toast((err as Error).message);
   }
-};
+}
+els.dStop.onclick = () => state.detail && stopTask(state.detail.task);
 els.dTrust.onclick = async () => {
   const t = state.detail?.task;
   if (!t) return;
   const next = t.trust === "read" ? "workspace" : "full";
   const warn = next === "full" ? "\n\nFull trust removes the sandbox: the agent can change anything your account can." : "";
-  if (!confirm(`Raise #${t.id} from ${t.trust} to ${next} trust?${warn}`)) return;
+  const when = ["working", "verifying"].includes(t.status) ? "\n\nThe current run keeps its trust; the new trust applies from the next run." : "";
+  if (!confirm(`Raise #${t.id} from ${t.trust} to ${next} trust?${warn}${when}`)) return;
   try {
     await send({ type: "trust", taskId: t.id, trust: next });
   } catch (err) {
@@ -732,6 +918,9 @@ els.dTrust.onclick = async () => {
   }
 };
 setInterval(renderListSoon, 30_000);
+setInterval(() => {
+  for (const a of activity.values()) if (!FINAL.includes(state.tasks.get(a.taskId)?.status ?? "done")) renderActivity(a);
+}, 1000);
 
 async function boot(): Promise<void> {
   try {
@@ -741,6 +930,7 @@ async function boot(): Promise<void> {
     for (const c of cards) state.cards.set(c.id, c);
     els.thread.replaceChildren();
     state.threadIds.clear();
+    activity.clear();
     for (const row of thread) addThread(row);
     if (!thread.length) els.thread.append(h("li", "host status", "Hi. Tell me what to take off your plate. Quick things go to pi, exploratory work to codex, heavy work to omp. You can keep talking while they run."));
     renderHarnesses();

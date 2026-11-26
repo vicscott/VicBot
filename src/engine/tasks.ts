@@ -41,7 +41,7 @@ export function submit(text: string, opts: IntakeOptions, actor: Actor): Task {
   const d = decide(text);
   const route = opts.route ?? (d.confidence >= ROUTE_THRESHOLD ? d.route : null);
   const effort = opts.effort ?? d.effort;
-  const task = createTask({ goal: d.text.trim() || text, route, effort, shape: d.shape, designated: d.designated, cwd: opts.cwd, mode: opts.mode });
+  const task = createTask({ goal: d.text.trim() || text, route, effort, shape: d.shape, designated: d.designated, web: d.web, cwd: opts.cwd, mode: opts.mode });
   ledger(task, "task.create", actor, { route, effort, shape: d.shape, confidence: d.confidence });
   if (!route) {
     openCard({
@@ -54,7 +54,7 @@ export function submit(text: string, opts: IntakeOptions, actor: Actor): Task {
     });
     return task;
   }
-  const h = selectHarness({ route, effort, role: d.shape === "orchestrated" ? "chair" : "worker", designated: d.designated });
+  const h = selectHarness({ route, effort, role: d.shape === "orchestrated" ? "chair" : "worker", designated: d.designated, web: d.web });
   db().event(task.id, null, { kind: "route", route, effort, shape: d.shape, harness: h?.manifest.id ?? "none", confidence: opts.route ? 1 : d.confidence, reason: opts.route ? "chosen by you" : d.reason });
   db().event(task.id, null, { kind: "user", text: task.goal, via: actor.device });
   db().enqueue(task.id, "start", { initiator: "person" }, `start:${task.id}`);
@@ -137,7 +137,7 @@ export function assignRoute(taskId: string, route: Route, actor: Actor): Task {
   const updated = store.transition(taskId, ["needs_route"], "queued", { route, trust, role: route, visited: [route], contract }, `routed to ${route} by you`);
   if (!updated) throw new Error("someone else routed it first");
   store.expireCards(taskId, "route");
-  const h = selectHarness({ route, effort: task.effort, role: "worker", designated: task.designated });
+  const h = selectHarness({ route, effort: task.effort, role: "worker", designated: task.designated, web: task.web });
   store.event(taskId, null, { kind: "route", route, effort: task.effort, shape: task.shape, harness: h?.manifest.id ?? "none", confidence: 1, reason: "chosen by you" });
   store.event(taskId, null, { kind: "user", text: task.goal, via: actor.device });
   store.enqueue(taskId, "start", { initiator: "person" }, `start:${taskId}`);

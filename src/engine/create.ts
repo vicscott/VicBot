@@ -14,6 +14,7 @@ export interface NewTask {
   effort: Effort;
   shape?: Shape;
   designated?: string | null;
+  web?: boolean;
   cwd?: string;
   contract?: Contract;
   parent?: Task;
@@ -75,6 +76,7 @@ export function createTask(input: NewTask): Task {
     cwd: input.cwd && parent && input.cwd === parent.cwd ? parent.cwd : resolveCwd(input.cwd, id),
     harness: null,
     designated: input.designated ?? null,
+    web: input.web ?? parent?.web ?? false,
     visited: input.visited ?? (route ? [route] : []),
     escalated: false,
     renewals: 0,

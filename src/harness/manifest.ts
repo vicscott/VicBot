@@ -41,6 +41,7 @@ export function parseManifest(raw: unknown): Manifest {
       sandbox: strings(caps.sandbox) ? caps.sandbox : [],
       images: caps.images === true,
       system: caps.system === "append" ? "append" : "preamble",
+      web: caps.web === true,
     },
     routes: routes as Manifest["routes"],
     serves,

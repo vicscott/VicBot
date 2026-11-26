@@ -11,7 +11,8 @@
     "effort": ["low", "medium", "high"],
     "sandbox": [],
     "images": false,
-    "system": "append"
+    "system": "append",
+    "web": false
   },
   "routes": ["explore", "build", "operate"],
   "serves": [{ "effort": "quick" }],

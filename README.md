@@ -3,6 +3,8 @@
 A personal agent platform. You talk to one host that is always ready; the work runs in the background on coding-agent CLIs, gets checked by a different agent, and comes back as a short report.
 
 - **Always ready.** The composer is never disabled and no message is rejected. A message to a busy task is queued as a note for its next turn (you can withdraw it); tick "stop and redirect" to interrupt. "status" is answered from the store, without a model call.
+- **Visible progress, without the noise.** Each task gets a live card in the chat: what it is doing now in plain words ("Searching the web: …", "Reading …", "Running `bun test`"), the last few steps, a clock, and Details/Message/Stop. Raw output stays in the task's timeline. The card shrinks to one line when the task ends.
+- **Current facts come from the web.** Questions about availability, eligibility, prices, policy or news route to at least standard effort and to a harness with web search (omp today). Set "About you" (or `vic profile`) once so every task knows where you are and who you work for.
 - **Three harnesses, picked by manifest.** pi for quick work, codex for exploratory and complex work, omp for heavy work. The mapping lives in `harnesses/*.json`, not in code.
 - **Verdicts, not guesses.** Every run ends by filing `.vicbot/verdict.json` (or a `<verdict>` tag when it can't write files): pass, rework, fail, human, overflow or handoff.
 - **The worker never checks itself.** Deterministic checks run first, then an independent review on another harness, then you, if the contract says so.
@@ -19,7 +21,9 @@ Requires [Bun](https://bun.sh) 1.3 or later, plus any of these CLIs on `PATH`, e
 |---|---|---|
 | `pi` | pi coding agent (1.5+) | quick tasks on any route |
 | `codex` | Codex CLI (0.170+) | explore and operate at standard effort, planning (chair), reviews |
-| `omp` | omp (19+) | build at standard and deep effort, and any deep task |
+| `omp` | omp (19+) | build at standard and deep effort, any deep task, and tasks that need web search |
+
+A harness declares web search with `"capabilities": { "web": true }` in its manifest. codex is marked `false` because hosted web search does not work through a custom model provider; set it to `true` if yours supports it.
 
 ```sh
 bun install
@@ -53,8 +57,10 @@ What happens on its own:
 ```
 vic serve | run <text> [--route r --effort e --cwd d --wait] | say <text> [--task id --interrupt]
 vic ls | show <id> | cancel <id> | route <text> | cards | answer <card> [option] [--text t]
-vic pair [--scope full|standard|notify] | harness list | templates [reseed <role>] | keeper
+vic pair [--scope full|standard|notify] | harness list | templates [reseed <role>] | profile [text] | keeper
 ```
+
+To start a new template generation on purpose, edit `templates/<role>.md` and raise its `generation:`. The server freezes it on the next start and retires the older versions. Editing a file without raising the generation only prints a warning.
 
 Run `bun link` to get `vic` on your PATH. The CLI talks to `/v1`; point it at another machine with `VICBOT_URL` and `VICBOT_TOKEN`.
 

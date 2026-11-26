@@ -1,5 +1,6 @@
 import { db, newId } from "../store";
 import { FINAL, type Card, type Task, type ThreadRow } from "../types";
+import { stepOf } from "../progress";
 import { told } from "../wake/memory";
 import { stripVerdict } from "./verdict";
 
@@ -59,6 +60,18 @@ export function statusSummary(): string {
   const active = tasks.filter((t) => !FINAL.includes(t.status));
   const open = db().cards({ open: true }).length;
   if (!active.length) return `Nothing is running.${open ? ` ${open} card(s) wait for you.` : ""}`;
-  const lines = active.slice(0, 8).map((t) => `- #${t.id} ${t.title} — ${t.status.replace(/_/g, " ")}${t.statusReason ? ` (${t.statusReason})` : ""}`);
+  const lines = active.slice(0, 8).map((t) => {
+    const last = lastStep(t.id);
+    return `- #${t.id} ${t.title} — ${t.status.replace(/_/g, " ")}${t.harness ? ` on ${t.harness}` : ""}${t.statusReason ? ` (${t.statusReason})` : ""}${last ? `\n  last: ${last}` : ""}`;
+  });
   return `${active.length} task(s) active:\n${lines.join("\n")}${open ? `\n${open} card(s) wait for you.` : ""}`;
+}
+
+function lastStep(taskId: string): string | null {
+  const events = db().events(taskId);
+  for (let i = events.length - 1; i >= 0 && i >= events.length - 40; i--) {
+    const step = stepOf(events[i]!.event, events[i]!.runId);
+    if (step) return step.text;
+  }
+  return null;
 }

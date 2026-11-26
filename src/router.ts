@@ -7,6 +7,8 @@ export interface Decision {
   designated: string | null;
   confidence: number;
   reason: string;
+  /** The answer depends on current facts outside the machine, so the worker needs web search. */
+  web: boolean;
   /** The input with a leading @harness removed. */
   text: string;
 }
@@ -35,13 +37,29 @@ const QUICK = /\b(quick(ly)?|briefly|just|only|one[- ]liner|simple|tiny|small)\b
 const ORCHESTRATE = /\b(orchestrate|break (it|this) down|split (it|this) into|in parallel|several parts|multi[- ]step plan)\b|(分解|拆分|并行)/i;
 const DESIGNATE = /^\s*@([a-z0-9][a-z0-9-]{0,31})\b\s*/i;
 const SHORT = 160;
+/** Facts that change over time: availability, eligibility, prices, policy, news. */
+const FRESH = /\b(latest|current(ly)?|today|this (week|month|year)|news|price|pricing|cost|availab(le|ility)|apply|application|eligib(le|ility)|access|policy|regulation|deadline|release[sd]?|version|which .{0,40} can i|20[2-3]\d)\b|(最新|目前|现在|当前|今年|最近|申请|开放|获取|资格|价格|费用|政策|规定|截止|新闻|发布|版本|数据库|哪些.{0,20}(可以|能))/i;
+/** Questions about the files on this machine do not need the web. */
+const LOCAL = /\b(this (repo|codebase|project|file|folder|directory)|in (the )?(repo|codebase)|src\/|\.\/)|\.(ts|tsx|js|py|rs|go|json|md)\b|(这个(项目|仓库|代码|文件|目录)|本地)/i;
+/** CJK text carries about three times the content per character of English. */
+const CJK = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/g;
 
-function effortFor(input: string, route: Route | null): [Effort, string] {
+function weight(input: string): number {
+  return input.length + 2 * (input.match(CJK)?.length ?? 0);
+}
+
+function effortFor(input: string, route: Route | null, web: boolean): [Effort, string] {
   if (DEEP.test(input)) return ["deep", "asked for depth"];
   if (QUICK.test(input)) return ["quick", "asked for brevity"];
-  if (input.length > 800) return ["deep", "long request"];
-  if (input.length <= SHORT && !input.includes("\n") && route !== "build") return ["quick", "short request"];
+  if (web) return ["standard", "needs current facts"];
+  const size = weight(input);
+  if (size > 800) return ["deep", "long request"];
+  if (size <= SHORT && !input.includes("\n") && route !== "build") return ["quick", "short request"];
   return ["standard", "default"];
+}
+
+function needsWeb(input: string): boolean {
+  return FRESH.test(input) && !LOCAL.test(input);
 }
 
 export function route(raw: string): Decision {
@@ -64,11 +82,13 @@ export function route(raw: string): Decision {
   }
   const tail = `${designated ? `; designated @${designated}` : ""}${shape === "orchestrated" ? "; asked to split" : ""}`;
   if (total === 0) {
-    const [effort, why] = effortFor(input, null);
-    return { route: null, effort, shape, designated, confidence: 0, reason: `no routing signal; ${effort}: ${why}${tail}`, text: input };
+    const web = needsWeb(input);
+    const [effort, why] = effortFor(input, null, web);
+    return { route: null, effort, shape, designated, confidence: 0, reason: `no routing signal; ${effort}: ${why}${web ? "; web" : ""}${tail}`, web, text: input };
   }
   const [best, score] = (Object.entries(scores) as [Route, number][]).sort((a, b) => b[1] - a[1])[0]!;
   const confidence = (score / total) * Math.min(1, score / 2);
-  const [effort, why] = effortFor(input, best);
-  return { route: best, effort, shape, designated, confidence: Math.round(confidence * 100) / 100, reason: `${hits.join(", ")}; ${effort}: ${why}${tail}`, text: input };
+  const web = needsWeb(input);
+  const [effort, why] = effortFor(input, best, web);
+  return { route: best, effort, shape, designated, confidence: Math.round(confidence * 100) / 100, reason: `${hits.join(", ")}; ${effort}: ${why}${web ? "; web" : ""}${tail}`, web, text: input };
 }

@@ -11,7 +11,8 @@
     "effort": [],
     "sandbox": [],
     "images": false,
-    "system": "preamble"
+    "system": "preamble",
+    "web": true
   },
   "routes": ["explore", "build", "operate"],
   "serves": [{}],
