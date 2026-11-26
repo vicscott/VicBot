@@ -13,7 +13,7 @@ import { createTask } from "../src/engine/create";
 import { LoopGuard } from "../src/engine/loopguard";
 import { lowerTrust, policyFor, selectHarness } from "../src/engine/policy";
 import { normalize, readVerdict, stripVerdict } from "../src/engine/verdict";
-import { codexArgv } from "../src/harness/codex";
+import { codexArgv, codexParser } from "../src/harness/codex";
 import { parseManifest } from "../src/harness/manifest";
 import { ompArgv } from "../src/harness/omp";
 import { piArgv } from "../src/harness/pi";
@@ -167,8 +167,11 @@ test("progress steps read as plain words and hide bookkeeping", () => {
   expect(describeTool("bash", `/bin/zsh -lc 'bun test'`)).toBe("Running `bun test`");
   expect(describeTool("write", '{"path":"/tmp/p/.vicbot/verdict.json","content":"{\\"decision')).toBe("Filing its verdict");
   expect(describeTool("read", '{"path":"/a/b/c/d.ts"}')).toBe("Reading …/c/d.ts");
+  expect(describeTool("read", '{"path":"local://0.log:514-532"}')).toBe("Rereading its earlier output");
   expect(stepOf({ kind: "tool", id: "1", name: "ls", input: '{"path":"."}', phase: "end", ok: false }, "r1")).toEqual({ key: "r1:1", text: "Looking through .", tone: "bad" });
   expect(stepOf({ kind: "usage", input: 1, output: 1, cacheRead: 0, cost: 0 })).toBeNull();
+  expect(codexParser(() => {})({ type: "error", message: "Codex is ignoring 1 unrecognized configuration setting." })).toEqual([{ kind: "notice", text: "config: Codex is ignoring 1 unrecognized configuration setting." }]);
+  expect(stepOf({ kind: "notice", text: "config: Codex is ignoring 1 unrecognized configuration setting." })).toBeNull();
   expect(thought("**Checking source availability**\nmore")).toBe("Checking source availability");
 });
 

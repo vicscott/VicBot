@@ -235,3 +235,26 @@ dialog .row select { width: auto; }
 @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
 dialog textarea { width: 100%; margin: 4px 0; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; resize: vertical; }
 .host-head #profile-btn { margin-left: auto; }
+
+/* Rendered markdown */
+.md { white-space: normal; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md blockquote, .md pre, .md .md-table { margin: 0 0 8px; }
+.md ul, .md ol { padding-left: 20px; }
+.md li { margin: 1px 0; }
+.md h3, .md h4, .md h5, .md h6, .md h7, .md h8 { margin: 12px 0 6px; font-size: 14px; }
+.md h3 { font-size: 15px; }
+.md strong { font-weight: 650; }
+.md a { color: var(--accent); }
+.md code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+.md pre { font-family: var(--mono); font-size: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; overflow-x: auto; white-space: pre; }
+.md blockquote { border-left: 2px solid var(--faint); padding-left: 10px; color: var(--dim); }
+.md hr { border: 0; border-top: 1px solid var(--line); }
+.md-table { overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: 13px; }
+.md th, .md td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+.md th { background: var(--panel-2); }
+#thread .host.report { white-space: normal; }
+.r-head { margin-bottom: 4px; }
+.r-more { margin-top: 2px; color: var(--accent); padding-left: 0; }

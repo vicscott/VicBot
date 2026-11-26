@@ -35,6 +35,7 @@ export function describeTool(name: string, input: string): string {
   const path = field(input, "path", "file_path", "file", "url") ?? (n === "edit" && input && !input.startsWith("{") ? input : null);
   if (path?.includes(".vicbot/")) return "Filing its verdict";
   if (path?.startsWith("skill://")) return "Loading a skill";
+  if (path && /^(local|artifact|memory):\/\//.test(path)) return "Rereading its earlier output";
   if (n.includes("search") && !n.includes("grep")) {
     const q = field(input, "query", "q") ?? (input.startsWith("{") ? "" : input);
     return q ? `Searching the web: “${clip(q, 70)}”` : "Searching the web";
@@ -88,7 +89,7 @@ export function stepOf(ev: VEvent, runId: string | null = null): Step | null {
     case "steer":
       return ev.phase === "read" ? { key: null, text: "Read your message", tone: "ok" } : ev.phase === "queued" ? { key: null, text: "Your message is queued for its next turn", tone: "info" } : null;
     case "notice":
-      return /^approval /.test(ev.text) ? null : { key: null, text: clip(ev.text, 140), tone: "info" };
+      return /^(approval|config): /.test(ev.text) ? null : { key: null, text: clip(ev.text, 140), tone: "info" };
     case "error":
       return { key: null, text: clip(ev.text, 140), tone: "bad" };
     case "limit":

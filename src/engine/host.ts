@@ -33,9 +33,12 @@ export function openCard(c: Pick<Card, "taskId" | "kind" | "title" | "body" | "o
   return card;
 }
 
-function short(text: string | null, n = 420): string {
+/** Cuts at a paragraph or line break when one is close, so markdown is not split mid-block. */
+function short(text: string | null, n = 700): string {
   const t = stripVerdict(text ?? "").replace(/\n{3,}/g, "\n\n").trim();
-  return t.length > n ? t.slice(0, n - 1) + "…" : t;
+  if (t.length <= n) return t;
+  const cut = Math.max(t.lastIndexOf("\n\n", n), t.lastIndexOf("\n", n));
+  return (cut > n * 0.5 ? t.slice(0, cut) : t.slice(0, n - 1)).trimEnd() + "…";
 }
 
 /** Start quiet: only a root task's done, blocked or failed reaches the person; children stay in the record. */

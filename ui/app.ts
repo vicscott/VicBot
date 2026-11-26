@@ -1,4 +1,5 @@
 import { stepOf, thought, type Step } from "../src/progress";
+import { markdown } from "./markdown";
 import type { BusMessage, Card, CheckResult, Device, Effort, Note, Route, Run, Session, StoredEvent, Task, ThreadRow, VEvent } from "../src/types";
 
 interface Detail {
@@ -137,10 +138,7 @@ function linked(text: string): DocumentFragment {
 
 function rich(text: string, cls = "ev-text"): HTMLElement {
   const root = h("li", cls);
-  text.split(/```[\w-]*\n?/).forEach((part, i) => {
-    if (i % 2) return void root.append(h("pre", "", part.replace(/\n$/, "")));
-    part.split(/(`[^`\n]+`)/).forEach((seg) => root.append(seg.startsWith("`") && seg.length > 2 ? h("code", "", seg.slice(1, -1)) : document.createTextNode(seg)));
-  });
+  root.append(markdown(text, (id) => void select(id)));
   return root;
 }
 
@@ -256,7 +254,31 @@ function threadNode(row: ThreadRow): HTMLElement | null {
   }
   const kind = row.kind === "report" ? `report ${/^Done/.test(row.text) ? "done" : /^Blocked/.test(row.text) ? "blocked" : "failed"}` : row.kind;
   const li = h("li", `host ${kind}`);
-  li.append(linked(row.text), h("span", "ts", clock(row.ts)));
+  if (row.kind !== "report") {
+    li.append(linked(row.text), h("span", "ts", clock(row.ts)));
+    return li;
+  }
+  const nl = row.text.indexOf("\n");
+  const head = h("div", "r-head");
+  head.append(linked(nl < 0 ? row.text : row.text.slice(0, nl)), h("span", "ts", clock(row.ts)));
+  const body = h("div", "r-body");
+  const summary = nl < 0 ? "" : row.text.slice(nl + 1);
+  const onTask = (id: string) => void select(id);
+  body.append(markdown(summary, onTask));
+  li.append(head, body);
+  const full = row.taskId ? state.tasks.get(row.taskId)?.result : null;
+  const fullText = full ? full.replace(/<verdict>[\s\S]*?<\/verdict>/g, "").trim() : "";
+  if (fullText && fullText.length > summary.replace(/…$/, "").length + 20) {
+    const toggle = h("button", "small ghost r-more", "Show full answer");
+    let open = false;
+    toggle.onclick = () => {
+      open = !open;
+      body.replaceChildren(markdown(open ? fullText : summary, onTask));
+      toggle.textContent = open ? "Show less" : "Show full answer";
+      if (!open) li.scrollIntoView({ block: "nearest" });
+    };
+    li.append(toggle);
+  }
   return li;
 }
 
@@ -415,6 +437,7 @@ async function loadActivity(a: Activity): Promise<void> {
     for (const s of live) if (!a.steps.some((x) => x.key && x.key === s.key)) a.steps.push(s);
     a.loaded = true;
     renderActivity(a);
+    renderListSoon();
   } catch {}
 }
 

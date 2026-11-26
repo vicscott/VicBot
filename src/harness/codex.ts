@@ -60,8 +60,10 @@ export function codexParser(onSession: (id: string) => void) {
       }
       case "turn.failed":
         return [{ kind: "error", text: String((line.error as Record<string, unknown> | undefined)?.message ?? "turn failed") }];
-      case "error":
-        return [{ kind: "error", text: String(line.message ?? "error") }];
+      case "error": {
+        const text = String(line.message ?? "error");
+        return [/unrecognized configuration|deprecated setting/i.test(text) ? { kind: "notice", text: `config: ${text}` } : { kind: "error", text }];
+      }
       default:
         return [];
     }
