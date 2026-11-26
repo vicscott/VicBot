@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { cancel, answerCard, intake, message, reframe, withdraw } from "../src/engine/tasks";
 import { live } from "../src/engine/live";
+import { team } from "../src/engine/team";
 import { loadHarnesses } from "../src/harness/registry";
 import { db, Store, useStore } from "../src/store";
 import { seedTemplates } from "../src/templates";
@@ -95,6 +96,26 @@ test("a check that fails twice escalates to a chair and a plan", async () => {
   expect(kids.every((k) => k.status === "done")).toBe(true);
   expect(final.status).toBe("blocked");
   expect(db().cards({ taskId: t.id, open: true }).some((c) => c.kind === "blocked")).toBe(true);
+});
+
+test("team: the discussion shows who said what to whom, and the board shares parts, checks and open items", async () => {
+  const t = say("research #null:review-fail options", { effort: "standard" });
+  await idle(20_000);
+  const { discussion, board } = team(db().children(t.id)[0]!.id);
+  const lines = discussion.map((s) => `${s.from} → ${s.to}: ${s.text}`);
+  expect(lines[0]).toStartWith("You → VicBot: research #null:review-fail options");
+  expect(lines[1]).toStartWith("VicBot → Explore bot · null: Over to you: explore · standard");
+  expect(discussion.some((s) => s.from === "Reviewer · null" && s.tone === "bad")).toBe(true);
+  expect(discussion.some((s) => s.from === "Chair · null" && s.text.startsWith("Plan in 2 parts"))).toBe(true);
+  expect(discussion.some((s) => s.from === "Part a · null" && s.text.startsWith("Done."))).toBe(true);
+  expect(discussion.some((s) => s.from === "VicBot" && s.to === "You" && s.tone === "ask")).toBe(true);
+  expect(discussion.map((s) => s.ts)).toEqual([...discussion.map((s) => s.ts)].sort((a, b) => a - b));
+  expect(board.parts.map((p) => [p.key, p.status])).toEqual([["a", "done"], ["b", "done"]]);
+  expect(board.doneWhen[0]).toStartWith("A reviewer agrees");
+  expect(board.checks.some((c) => c.id === "review" && !c.ok)).toBe(true);
+  expect(board.open.length).toBeGreaterThan(0);
+  expect(board.findings.length).toBe(2);
+  expect(board.bots).toContain("Reviewer · null");
 });
 
 test("a handoff creates a child on the new route and the parent follows it", async () => {
@@ -292,5 +313,45 @@ test("a chosen new conversation always starts its own task, even for a follow-up
   const s = intake("status", { fresh: true, context: a.id }, me);
   expect(s.task).toBeUndefined();
   expect(db().thread().at(-1)!.taskId).toBeNull();
+  await idle();
+});
+
+test("ideas: a standalone idea gets a quick reaction and a card; taking it further moves the same conversation to a real route", async () => {
+  const r = intake("I think VicBot could keep a weekly digest of my ideas", {}, me);
+  const t = r.task!;
+  expect(t.meta.kind).toBe("idea");
+  expect([t.route, t.effort]).toEqual(["explore", "quick"]);
+  expect(r.row!.taskId).toBe(t.id);
+  await idle();
+  expect(get(t.id).status).toBe("done");
+  expect(db().runs(t.id).map((x) => x.purpose)).toEqual(["work"]);
+  expect(db().thread().some((x) => x.kind === "report" && x.text.startsWith(`Idea: #${t.id}`))).toBe(true);
+  const card = db().cards({ open: true }).find((c) => c.taskId === t.id && c.kind === "idea")!;
+  expect(card.options.map((o) => o.id)).toEqual(["explore", "build", "keep"]);
+  answerCard(card.id, "explore", null, me);
+  await idle();
+  const dev = get(t.id);
+  expect(dev.status).toBe("done");
+  expect([dev.route, dev.effort, dev.meta.kind]).toEqual(["explore", "standard", "idea-developed"]);
+  expect(dev.goal).toContain("Develop this idea");
+  expect(db().runs(t.id).map((x) => x.purpose)).toEqual(["work", "work", "verify"]);
+});
+
+test("ideas: an idea for a finished conversation is kept for its next turn and runs nothing until asked", async () => {
+  const a = say("explain quickly what a monad is");
+  await idle();
+  const runs = db().runs(a.id).length;
+  const r = intake("I think it would be nice to mention functors too", { context: a.id }, me);
+  expect(r.task).toBeUndefined();
+  expect(db().note(r.note!.id)!.mode).toBe("fold");
+  await idle();
+  expect(db().runs(a.id).length).toBe(runs);
+  const card = db().cards({ open: true }).find((c) => c.taskId === a.id && c.kind === "idea")!;
+  answerCard(card.id, "work", null, me);
+  await idle();
+  expect(db().runs(a.id).length).toBeGreaterThan(runs);
+  expect(db().note(r.note!.id)!.status).toBe("read");
+  const task = intake("can you write a haiku about it?", { context: a.id }, me);
+  expect(task.note!.mode).toBe("push");
   await idle();
 });

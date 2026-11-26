@@ -81,11 +81,14 @@
       </header>
       <div id="d-cards"></div>
       <nav class="tabs" id="tabs">
-        <button data-tab="timeline" class="on">Timeline</button>
-        <button data-tab="runs">Runs</button>
-        <button data-tab="checks">Checks</button>
-        <button data-tab="contract">Contract</button>
-        <button data-tab="notes">Notes</button>
+        <button data-tab="discussion" class="on">Discussion</button>
+        <button data-tab="board">Board</button>
+        <button data-tab="timeline" class="raw" hidden>Timeline</button>
+        <button data-tab="runs" class="raw" hidden>Runs</button>
+        <button data-tab="checks" class="raw" hidden>Checks</button>
+        <button data-tab="contract" class="raw" hidden>Contract</button>
+        <button data-tab="notes" class="raw" hidden>Notes</button>
+        <button type="button" id="raw-toggle" class="raw-toggle">Raw log</button>
       </nav>
       <div id="pane"></div>
     </section>

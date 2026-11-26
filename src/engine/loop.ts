@@ -255,7 +255,7 @@ async function gate(task: Task, run: Run, v: Verdict, origin: RunPurpose, baseli
         recordCheck(task, run, "artifacts", "file", false, detail);
         return reworkOrEscalate(task, [{ id: "artifacts", detail }], final);
       }
-      if (store.notes(task.id, "queued").length) {
+      if (store.notes(task.id, "queued").some((n) => n.mode !== "fold")) {
         store.transition(task.id, OPEN, "queued", { result: final }, "new messages arrived during the run");
         store.enqueue(task.id, "note", {});
         kick();
